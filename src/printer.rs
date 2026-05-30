@@ -12,6 +12,12 @@ pub struct Printer {
     /// Source end line of the most recently emitted statement, used to preserve
     /// author blank lines between statements.
     prev_end_line: Option<usize>,
+    /// Width (in columns) the pending end-of-line comment will occupy on the
+    /// final line of the current statement. Counted against the budget only for
+    /// the last element of a wrapped construct (and in the flat-vs-wrap
+    /// decision), so a trailing comment can force a wrap without pushing the
+    /// greedy fill of earlier lines too far left.
+    eol_reserve: usize,
 }
 
 impl Printer {
@@ -24,6 +30,7 @@ impl Printer {
             width: opts.line_width,
             max_blank_lines: opts.max_blank_lines,
             prev_end_line: None,
+            eol_reserve: 0,
         }
     }
 
@@ -67,13 +74,17 @@ impl Printer {
     /// line past the configured width. Multi-line `flat` is measured by its
     /// longest constituent line (its first line offset by `start_col`).
     fn exceeds_limit(&self, start_col: usize, flat: &str) -> bool {
-        let mut first = true;
-        for line in flat.split('\n') {
-            let len = line.chars().count() + if first { start_col } else { 0 };
+        let lines: Vec<&str> = flat.split('\n').collect();
+        let last = lines.len() - 1;
+        for (i, line) in lines.iter().enumerate() {
+            let mut len = line.chars().count() + if i == 0 { start_col } else { 0 };
+            // The pending EOL comment lands on the statement's final line.
+            if i == last {
+                len += self.eol_reserve;
+            }
             if len > self.width {
                 return true;
             }
-            first = false;
         }
         false
     }
@@ -160,6 +171,23 @@ impl Printer {
         }
     }
 
+    /// Width of the pending EOL comment for the statement ending on
+    /// `stmt_end_line`, as it will be rendered (two spaces + normalized text),
+    /// or 0 if none.
+    fn pending_eol_width(&self, stmt_end_line: usize) -> usize {
+        if let Some(item) = self.trivia.front() {
+            if is_eol_comment(item, stmt_end_line) {
+                let rendered = if item.text.starts_with("//") {
+                    format_line_comment(&item.text)
+                } else {
+                    item.text.trim_end().to_string()
+                };
+                return 2 + rendered.chars().count();
+            }
+        }
+        0
+    }
+
     /// If the next pending trivia item is on `stmt_end_line` (i.e. it trails the
     /// statement we just printed), consume and return it as an EOL comment.
     fn take_eol_comment(&mut self, stmt_end_line: usize) -> Option<TriviaItem> {
@@ -224,7 +252,9 @@ impl Printer {
         self.inject_trivia_before(start);
         self.emit_blank_gap(start_line);
         self.emit_indent();
+        self.eol_reserve = self.pending_eol_width(end_line);
         self.print_statement(node);
+        self.eol_reserve = 0;
         let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
@@ -415,14 +445,19 @@ impl Printer {
                 )
             })
             .collect();
+        let n = args.len();
         for (i, arg) in args.iter().enumerate() {
             let piece = self.trial(|p| p.emit_expr(*arg));
+            let last = i + 1 == n;
+            // The last argument's line also carries `)`, the trailing `;`, and
+            // any EOL comment; reserve for them so the break decision is honest.
+            let tail = if last { 2 + self.eol_reserve } else { 0 };
             if i == 0 {
                 self.emit(&piece);
             } else {
                 // We are after a prior arg; a "," was already emitted for it.
                 // Decide: continue on this line (" " + piece) or break.
-                let on_same = self.current_col() + 1 + piece.chars().count();
+                let on_same = self.current_col() + 1 + piece.chars().count() + tail;
                 if on_same > self.width {
                     self.emit_newline();
                     self.emit_continuation_indent();
@@ -432,7 +467,7 @@ impl Printer {
                     self.emit(&piece);
                 }
             }
-            if i + 1 != args.len() {
+            if !last {
                 self.emit(",");
             }
         }
@@ -514,12 +549,20 @@ impl Printer {
         }
         // Then each "op operand", breaking before the operator when the pair
         // would overflow the current line.
-        for (op, operand) in ops {
+        let n = ops.len();
+        for (idx, (op, operand)) in ops.into_iter().enumerate() {
             let op_text = op.text().to_string();
             let piece = self.trial(|p| p.emit_expr(operand));
+            // The last operand's line also carries the trailing `;` and any EOL
+            // comment; reserve for them on the final pair only.
+            let tail = if idx + 1 == n { 1 + self.eol_reserve } else { 0 };
             // " op operand"
-            let same_line =
-                self.current_col() + 1 + op_text.chars().count() + 1 + piece.chars().count();
+            let same_line = self.current_col()
+                + 1
+                + op_text.chars().count()
+                + 1
+                + piece.chars().count()
+                + tail;
             if same_line > self.width {
                 self.emit_newline();
                 self.emit_continuation_indent();
@@ -604,7 +647,9 @@ impl Printer {
         self.inject_trivia_before(start);
         self.emit_blank_gap(start_line);
         self.emit_indent();
+        self.eol_reserve = self.pending_eol_width(end_line);
         self.print_statement(node);
+        self.eol_reserve = 0;
         let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
