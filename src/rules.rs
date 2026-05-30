@@ -30,8 +30,8 @@ pub fn space_before(next: Kind, prev: Kind, _parent: Kind) -> SpaceDecision {
 
         // Binary operators: space before.
         Plus | Minus | Star | Slash | Percent | Assign | PlusEq | MinusEq | StarEq | SlashEq
-        | EqEq | BangEq | Eq | Neq | Lt | Gt | LtEq | GtEq | AmpAmp | PipePipe | And | Or
-        | Amp | Pipe | Caret | LtLt | GtGt | Question | Colon | To => Single,
+        | EqEq | BangEq | Eq | Neq | Lt | Gt | LtEq | GtEq | AmpAmp | PipePipe | And | Or | Amp
+        | Pipe | Caret | LtLt | GtGt | Question | Colon | To => Single,
 
         // Space after binary operators.
         _ if matches!(
