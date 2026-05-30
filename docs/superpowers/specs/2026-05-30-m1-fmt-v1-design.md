@@ -4,6 +4,11 @@
 **Status:** Approved for implementation
 **Author:** Christian Nucifora
 
+> **Note:** Example identifiers in this document (e.g. `Vund Klee.Trilby Glonk`)
+> are synthetic placeholders, not drawn from any real project. The corpus path is
+> resolved via the `M1_CORPUS_PATH` env var (falling back to the sibling EV-M1
+> example project).
+
 ---
 
 ## 1. Purpose
