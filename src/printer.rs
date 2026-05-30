@@ -252,7 +252,10 @@ impl Printer {
         self.inject_trivia_before(start);
         self.emit_blank_gap(start_line);
         self.emit_indent();
-        self.eol_reserve = self.pending_eol_width(end_line);
+        // Reserve the trailing `;` (statements that carry one) plus any EOL
+        // comment, so a line that is over-budget only because of them wraps.
+        let semi = usize::from(ends_with_semicolon(node.kind()));
+        self.eol_reserve = self.pending_eol_width(end_line) + semi;
         self.print_statement(node);
         self.eol_reserve = 0;
         let eol = self.take_eol_comment(end_line);
@@ -450,8 +453,13 @@ impl Printer {
             let piece = self.trial(|p| p.emit_expr(*arg));
             let last = i + 1 == n;
             // The last argument's line also carries `)`, the trailing `;`, and
-            // any EOL comment; reserve for them so the break decision is honest.
-            let tail = if last { 2 + self.eol_reserve } else { 0 };
+            // any EOL comment; a non-last argument is followed by a `,`. Reserve
+            // for whichever applies so the break decision is honest.
+            let tail = if last {
+                1 + self.eol_reserve // ")" + ("; comment" already in eol_reserve)
+            } else {
+                1 // ","
+            };
             if i == 0 {
                 self.emit(&piece);
             } else {
@@ -647,7 +655,10 @@ impl Printer {
         self.inject_trivia_before(start);
         self.emit_blank_gap(start_line);
         self.emit_indent();
-        self.eol_reserve = self.pending_eol_width(end_line);
+        // Reserve the trailing `;` (statements that carry one) plus any EOL
+        // comment, so a line that is over-budget only because of them wraps.
+        let semi = usize::from(ends_with_semicolon(node.kind()));
+        self.eol_reserve = self.pending_eol_width(end_line) + semi;
         self.print_statement(node);
         self.eol_reserve = 0;
         let eol = self.take_eol_comment(end_line);
@@ -797,6 +808,15 @@ impl Printer {
             }
         }
     }
+}
+
+/// Statement kinds whose printed form ends in a `;` on the same line as their
+/// (potentially wrapped) expression.
+fn ends_with_semicolon(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::LocalDeclaration | Kind::AssignmentStatement | Kind::ExpressionStatement
+    )
 }
 
 pub fn print(cst: &Cst) -> String {
