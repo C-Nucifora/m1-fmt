@@ -6,9 +6,6 @@ pub struct Printer {
     indent: usize,
     output: String,
     trivia: VecDeque<TriviaItem>,
-    // `width` is consumed by the wrapping emitters added in Task 4; until then it
-    // is only read by `exceeds_limit` (exercised in tests).
-    #[allow(dead_code)]
     width: usize,
     #[allow(dead_code)]
     max_blank_lines: usize,
@@ -59,7 +56,6 @@ impl Printer {
 
     /// Display column of the cursor on the current (last) physical line: the
     /// number of chars emitted since the most recent newline.
-    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
     fn current_col(&self) -> usize {
         match self.output.rfind('\n') {
             Some(i) => self.output[i + 1..].chars().count(),
@@ -70,7 +66,6 @@ impl Printer {
     /// True if `flat`, placed starting at column `start_col`, would push the
     /// line past the configured width. Multi-line `flat` is measured by its
     /// longest constituent line (its first line offset by `start_col`).
-    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
     fn exceeds_limit(&self, start_col: usize, flat: &str) -> bool {
         let mut first = true;
         for line in flat.split('\n') {
@@ -85,7 +80,6 @@ impl Printer {
 
     /// Emit a continuation indent: the current block indent plus two extra
     /// 4-space units (+8), per the v2 spec §3.3.
-    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
     fn emit_continuation_indent(&mut self) {
         for _ in 0..self.indent {
             self.output.push_str("    ");
@@ -96,7 +90,6 @@ impl Printer {
     /// Render `f` into a scratch buffer at the current indent WITHOUT mutating
     /// `self.output` or consuming any trivia, and return what `f` appended.
     /// Used to measure a node's flat width before deciding whether to wrap.
-    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
     fn trial(&mut self, f: impl FnOnce(&mut Printer)) -> String {
         let mark = self.output.len();
         let saved_trivia = self.trivia.clone();
@@ -376,7 +369,17 @@ impl Printer {
     }
 
     fn emit_arg_list(&mut self, node: Node) {
-        // `(` expr (`,` expr)* `)` — no padding, comma + single space.
+        let start_col = self.current_col();
+        let flat = self.trial(|p| p.emit_arg_list_flat(node));
+        if self.exceeds_limit(start_col, &flat) {
+            self.emit_arg_list_wrapped(node);
+        } else {
+            self.emit(&flat);
+        }
+    }
+
+    /// `(` expr (`,` expr)* `)` on a single line — no padding, comma + space.
+    fn emit_arg_list_flat(&mut self, node: Node) {
         self.emit("(");
         let mut first = true;
         for child in node.children() {
@@ -389,6 +392,48 @@ impl Printer {
                     first = false;
                     self.emit_expr(child);
                 }
+            }
+        }
+        self.emit(")");
+    }
+
+    /// Wrapped argument list: greedy fill, continuation lines at +8, no trailing
+    /// comma before `)`.
+    fn emit_arg_list_wrapped(&mut self, node: Node) {
+        self.emit("(");
+        let args: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| {
+                !matches!(
+                    c.kind(),
+                    Kind::LParen
+                        | Kind::RParen
+                        | Kind::Comma
+                        | Kind::LineComment
+                        | Kind::BlockComment
+                )
+            })
+            .collect();
+        for (i, arg) in args.iter().enumerate() {
+            let piece = self.trial(|p| p.emit_expr(*arg));
+            if i == 0 {
+                self.emit(&piece);
+            } else {
+                // We are after a prior arg; a "," was already emitted for it.
+                // Decide: continue on this line (" " + piece) or break.
+                let on_same = self.current_col() + 1 + piece.chars().count();
+                if on_same > self.width {
+                    self.emit_newline();
+                    self.emit_continuation_indent();
+                    self.emit(&piece);
+                } else {
+                    self.emit(" ");
+                    self.emit(&piece);
+                }
+            }
+            if i + 1 != args.len() {
+                self.emit(",");
             }
         }
         self.emit(")");
