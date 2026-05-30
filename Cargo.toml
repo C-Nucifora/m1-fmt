@@ -16,7 +16,7 @@ m1-core = { path = "../m1-core" }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
-# proptest = "1"     # add later for property tests
+proptest = "1"
 
 [profile.release]
 opt-level = 3
