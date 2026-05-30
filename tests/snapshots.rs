@@ -75,7 +75,10 @@ fn test_final_newline() {
 fn test_blank_lines_max1() {
     run_snapshot_with(
         "blank_lines_max1",
-        &m1_fmt::FormatOptions { max_blank_lines: 1, line_width: 88 },
+        &m1_fmt::FormatOptions {
+            max_blank_lines: 1,
+            line_width: 88,
+        },
     );
 }
 

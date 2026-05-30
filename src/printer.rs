@@ -563,14 +563,14 @@ impl Printer {
             let piece = self.trial(|p| p.emit_expr(operand));
             // The last operand's line also carries the trailing `;` and any EOL
             // comment; reserve for them on the final pair only.
-            let tail = if idx + 1 == n { 1 + self.eol_reserve } else { 0 };
+            let tail = if idx + 1 == n {
+                1 + self.eol_reserve
+            } else {
+                0
+            };
             // " op operand"
-            let same_line = self.current_col()
-                + 1
-                + op_text.chars().count()
-                + 1
-                + piece.chars().count()
-                + tail;
+            let same_line =
+                self.current_col() + 1 + op_text.chars().count() + 1 + piece.chars().count() + tail;
             if same_line > self.width {
                 self.emit_newline();
                 self.emit_continuation_indent();

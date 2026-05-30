@@ -34,10 +34,7 @@ pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
     format_str_with(src, &FormatOptions::default())
 }
 
-pub fn format_str_with(
-    src: &str,
-    opts: &FormatOptions,
-) -> Result<FormatResult, FormatError> {
+pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
     let cst = m1_core::parse(src);
 
     let diags = cst.syntax_diagnostics();
@@ -82,10 +79,7 @@ pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
     format_file_with(path, &FormatOptions::default())
 }
 
-pub fn format_file_with(
-    path: &Path,
-    opts: &FormatOptions,
-) -> Result<FormatResult, FormatError> {
+pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
     let src = std::fs::read_to_string(path).map_err(FormatError::IoError)?;
     format_str_with(&src, opts)
 }
