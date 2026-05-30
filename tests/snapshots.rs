@@ -83,3 +83,12 @@ fn test_blank_lines_max1() {
 fn test_blank_lines_brace_adjacent() {
     run_snapshot("blank_lines_brace_adjacent");
 }
+
+#[test]
+fn test_wrap_arg_list() {
+    run_snapshot("wrap_arg_list");
+}
+#[test]
+fn test_wrap_no_trailing_comma() {
+    run_snapshot("wrap_no_trailing_comma");
+}
