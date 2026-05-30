@@ -6,6 +6,8 @@ pub struct Printer {
     indent: usize,
     output: String,
     trivia: VecDeque<TriviaItem>,
+    // `width` is consumed by the wrapping emitters added in Task 4; until then it
+    // is only read by `exceeds_limit` (exercised in tests).
     #[allow(dead_code)]
     width: usize,
     #[allow(dead_code)]
@@ -53,6 +55,60 @@ impl Printer {
 
     fn emit_newline(&mut self) {
         self.output.push('\n');
+    }
+
+    /// Display column of the cursor on the current (last) physical line: the
+    /// number of chars emitted since the most recent newline.
+    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
+    fn current_col(&self) -> usize {
+        match self.output.rfind('\n') {
+            Some(i) => self.output[i + 1..].chars().count(),
+            None => self.output.chars().count(),
+        }
+    }
+
+    /// True if `flat`, placed starting at column `start_col`, would push the
+    /// line past the configured width. Multi-line `flat` is measured by its
+    /// longest constituent line (its first line offset by `start_col`).
+    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
+    fn exceeds_limit(&self, start_col: usize, flat: &str) -> bool {
+        let mut first = true;
+        for line in flat.split('\n') {
+            let len = line.chars().count() + if first { start_col } else { 0 };
+            if len > self.width {
+                return true;
+            }
+            first = false;
+        }
+        false
+    }
+
+    /// Emit a continuation indent: the current block indent plus two extra
+    /// 4-space units (+8), per the v2 spec §3.3.
+    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
+    fn emit_continuation_indent(&mut self) {
+        for _ in 0..self.indent {
+            self.output.push_str("    ");
+        }
+        self.output.push_str("        ");
+    }
+
+    /// Render `f` into a scratch buffer at the current indent WITHOUT mutating
+    /// `self.output` or consuming any trivia, and return what `f` appended.
+    /// Used to measure a node's flat width before deciding whether to wrap.
+    #[allow(dead_code)] // wired into the wrapping emitters in Task 4
+    fn trial(&mut self, f: impl FnOnce(&mut Printer)) -> String {
+        let mark = self.output.len();
+        let saved_trivia = self.trivia.clone();
+        let saved_indent = self.indent;
+        let saved_prev_end_line = self.prev_end_line;
+        f(self);
+        let rendered = self.output[mark..].to_string();
+        self.output.truncate(mark);
+        self.trivia = saved_trivia;
+        self.indent = saved_indent;
+        self.prev_end_line = saved_prev_end_line;
+        rendered
     }
 
     /// Emit a single own-line trivia item at the current indentation,
@@ -667,4 +723,61 @@ fn collapse_blank_lines(output: &mut String, max_blank: usize) {
         }
     }
     *output = result;
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    fn printer() -> Printer {
+        let cst = m1_core::parse("x = 1;\n");
+        Printer::new(&cst, &crate::FormatOptions::default())
+    }
+
+    #[test]
+    fn current_col_counts_since_last_newline() {
+        let mut p = printer();
+        p.emit("abc");
+        assert_eq!(p.current_col(), 3);
+        p.emit_newline();
+        p.emit("de");
+        assert_eq!(p.current_col(), 2);
+    }
+
+    #[test]
+    fn exceeds_limit_boundary() {
+        let p = printer();
+        // 88 chars exactly: not over. 89: over.
+        let s88 = "a".repeat(88);
+        let s89 = "a".repeat(89);
+        assert!(!p.exceeds_limit(0, &s88));
+        assert!(p.exceeds_limit(0, &s89));
+        // Landing column counts toward the budget.
+        assert!(p.exceeds_limit(1, &s88));
+    }
+
+    #[test]
+    fn trial_does_not_mutate_output_or_trivia() {
+        let cst = m1_core::parse("// c\nx = 1;\n");
+        let mut p = Printer::new(&cst, &crate::FormatOptions::default());
+        p.emit("before");
+        let trivia_before = p.trivia.len();
+        let rendered = p.trial(|p| {
+            p.emit("inside");
+            p.flush_remaining_trivia();
+        });
+        // `rendered` captures everything `f` appended (including the flushed
+        // comment), but `trial` must restore `output` and `trivia` afterwards.
+        assert!(rendered.starts_with("inside"));
+        assert_eq!(p.output, "before");
+        assert_eq!(p.trivia.len(), trivia_before);
+    }
+
+    #[test]
+    fn continuation_indent_is_block_plus_eight() {
+        let mut p = printer();
+        p.indent = 1; // 4 spaces of block indent
+        p.emit_continuation_indent();
+        assert_eq!(p.output, " ".repeat(4 + 8));
+    }
 }
