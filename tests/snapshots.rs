@@ -92,3 +92,7 @@ fn test_wrap_arg_list() {
 fn test_wrap_no_trailing_comma() {
     run_snapshot("wrap_no_trailing_comma");
 }
+#[test]
+fn test_wrap_binary_chain() {
+    run_snapshot("wrap_binary_chain");
+}

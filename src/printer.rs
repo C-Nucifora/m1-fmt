@@ -453,22 +453,84 @@ impl Printer {
     }
 
     fn emit_binary(&mut self, node: Node) {
-        // left operator right — spaces around the operator.
-        let mut parts: Vec<Node> = Vec::new();
-        for child in node.children() {
-            if matches!(child.kind(), Kind::LineComment | Kind::BlockComment) {
-                continue;
-            }
-            parts.push(child);
+        let start_col = self.current_col();
+        let flat = self.trial(|p| p.emit_binary_flat(node));
+        if self.exceeds_limit(start_col, &flat) {
+            self.emit_binary_wrapped(node);
+        } else {
+            self.emit(&flat);
         }
+    }
+
+    fn emit_binary_flat(&mut self, node: Node) {
+        let parts: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+            .collect();
         for (i, child) in parts.iter().enumerate() {
             if i == 1 {
-                // operator
                 self.emit(" ");
                 self.emit(child.text());
                 self.emit(" ");
             } else {
                 self.emit_expr(*child);
+            }
+        }
+    }
+
+    /// Flatten a left-associative binary chain into the first operand followed
+    /// by (operator, operand) pairs, so we can break before each operator.
+    fn flatten_binary<'a>(
+        &self,
+        node: Node<'a>,
+        ops: &mut Vec<(Node<'a>, Node<'a>)>,
+        first: &mut Option<Node<'a>>,
+    ) {
+        let parts: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+            .collect();
+        // parts == [left, operator, right]
+        let left = parts[0];
+        let op = parts[1];
+        let right = parts[2];
+        if left.kind() == Kind::BinaryExpression {
+            self.flatten_binary(left, ops, first);
+        } else if first.is_none() {
+            *first = Some(left);
+        }
+        ops.push((op, right));
+    }
+
+    fn emit_binary_wrapped(&mut self, node: Node) {
+        let mut ops: Vec<(Node, Node)> = Vec::new();
+        let mut first: Option<Node> = None;
+        self.flatten_binary(node, &mut ops, &mut first);
+        // Emit the first operand.
+        if let Some(f) = first {
+            self.emit_expr(f);
+        }
+        // Then each "op operand", breaking before the operator when the pair
+        // would overflow the current line.
+        for (op, operand) in ops {
+            let op_text = op.text().to_string();
+            let piece = self.trial(|p| p.emit_expr(operand));
+            // " op operand"
+            let same_line =
+                self.current_col() + 1 + op_text.chars().count() + 1 + piece.chars().count();
+            if same_line > self.width {
+                self.emit_newline();
+                self.emit_continuation_indent();
+                self.emit(&op_text);
+                self.emit(" ");
+                self.emit(&piece);
+            } else {
+                self.emit(" ");
+                self.emit(&op_text);
+                self.emit(" ");
+                self.emit(&piece);
             }
         }
     }
