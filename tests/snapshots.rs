@@ -1,5 +1,21 @@
 use std::path::Path;
 
+fn run_snapshot_with(name: &str, opts: &m1_fmt::FormatOptions) {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+    let input_path = dir.join(format!("{}.m1scr", name));
+    let expected_path = dir.join(format!("{}.expected", name));
+    let input = std::fs::read_to_string(&input_path)
+        .unwrap_or_else(|_| panic!("missing snapshot input: {}", input_path.display()));
+    let expected = std::fs::read_to_string(&expected_path)
+        .unwrap_or_else(|_| panic!("missing snapshot expected: {}", expected_path.display()));
+    let result = m1_fmt::format_str_with(&input, opts).expect("format_str_with failed");
+    assert_eq!(
+        result.output, expected,
+        "snapshot mismatch for {}\n--- expected ---\n{}\n--- actual ---\n{}",
+        name, expected, result.output
+    );
+}
+
 fn run_snapshot(name: &str) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
     let input_path = dir.join(format!("{}.m1scr", name));
@@ -53,4 +69,17 @@ fn test_trailing_whitespace() {
 #[test]
 fn test_final_newline() {
     run_snapshot("final_newline");
+}
+
+#[test]
+fn test_blank_lines_max1() {
+    run_snapshot_with(
+        "blank_lines_max1",
+        &m1_fmt::FormatOptions { max_blank_lines: 1, line_width: 88 },
+    );
+}
+
+#[test]
+fn test_blank_lines_brace_adjacent() {
+    run_snapshot("blank_lines_brace_adjacent");
 }

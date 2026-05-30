@@ -23,6 +23,10 @@ struct Args {
     /// Filename to use when reading from stdin
     #[arg(long, default_value = "<stdin>")]
     stdin_filename: String,
+
+    /// Maximum consecutive blank lines to keep
+    #[arg(long, default_value_t = 2)]
+    max_blank_lines: usize,
 }
 
 /// Print a minimal unified diff between `original` and `formatted`.
@@ -48,6 +52,10 @@ fn print_diff(name: &str, original: &str, formatted: &str) {
 
 fn main() {
     let args = Args::parse();
+    let opts = m1_fmt::FormatOptions {
+        max_blank_lines: args.max_blank_lines,
+        ..Default::default()
+    };
     let mut any_changed = false;
     let mut any_error = false;
 
@@ -55,7 +63,7 @@ fn main() {
         // Read from stdin.
         let mut src = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut src).unwrap();
-        match m1_fmt::format_str(&src) {
+        match m1_fmt::format_str_with(&src, &opts) {
             Ok(result) => {
                 for w in &result.warnings {
                     eprintln!("{}:{}: warning: {}", args.stdin_filename, w.line, w.message);
@@ -82,7 +90,7 @@ fn main() {
     } else {
         for path in &args.files {
             let original = std::fs::read_to_string(path).ok();
-            match m1_fmt::format_file(path) {
+            match m1_fmt::format_file_with(path, &opts) {
                 Ok(result) => {
                     for w in &result.warnings {
                         eprintln!("{}:{}: warning: {}", path.display(), w.line, w.message);
