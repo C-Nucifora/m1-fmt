@@ -96,3 +96,11 @@ fn test_wrap_no_trailing_comma() {
 fn test_wrap_binary_chain() {
     run_snapshot("wrap_binary_chain");
 }
+#[test]
+fn test_wrap_if_condition() {
+    run_snapshot("wrap_if_condition");
+}
+#[test]
+fn test_wrap_unbreakable_atom() {
+    run_snapshot("wrap_unbreakable_atom");
+}
