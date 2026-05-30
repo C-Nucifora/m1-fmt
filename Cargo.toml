@@ -13,6 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 m1-core = { path = "../m1-core" }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 # proptest = "1"     # add later for property tests
