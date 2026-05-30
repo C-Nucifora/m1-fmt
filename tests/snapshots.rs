@@ -104,3 +104,11 @@ fn test_wrap_if_condition() {
 fn test_wrap_unbreakable_atom() {
     run_snapshot("wrap_unbreakable_atom");
 }
+#[test]
+fn test_wrap_eol_comment() {
+    run_snapshot("wrap_eol_comment");
+}
+#[test]
+fn test_wrap_idempotent() {
+    run_snapshot("wrap_idempotent");
+}
