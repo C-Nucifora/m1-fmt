@@ -633,7 +633,12 @@ impl Printer {
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {
                     if seen_lparen {
+                        // Reserve room for the trailing `) {` that follows the
+                        // condition, so the wrap decision accounts for it.
+                        let saved = self.width;
+                        self.width = self.width.saturating_sub(3);
                         self.emit_expr(child);
+                        self.width = saved;
                     }
                 }
             }
