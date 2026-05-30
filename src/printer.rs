@@ -69,27 +69,29 @@ impl Printer {
         }
     }
 
-    /// Consume and emit all own-line trivia whose byte offset is before
-    /// `before_byte` and that are NOT on `stmt_line`. Returns a pending EOL
-    /// comment (one whose source line equals `stmt_line`), if any.
-    fn inject_trivia_before(
-        &mut self,
-        before_byte: usize,
-        stmt_line: usize,
-    ) -> Option<TriviaItem> {
-        let mut eol = None;
+    /// Consume and emit, as own-line comments, all trivia whose byte offset is
+    /// before `before_byte`. Trivia that is positioned before the statement
+    /// always lands on its own line (true EOL comments are attached after the
+    /// statement is printed, via [`Printer::take_eol_comment`]).
+    fn inject_trivia_before(&mut self, before_byte: usize) {
         while let Some(item) = self.trivia.front() {
             if item.byte_offset >= before_byte {
                 break;
             }
             let item = self.trivia.pop_front().unwrap();
-            if is_eol_comment(&item, stmt_line) {
-                eol = Some(item);
-            } else {
-                self.emit_own_line_trivia(&item);
+            self.emit_own_line_trivia(&item);
+        }
+    }
+
+    /// If the next pending trivia item is on `stmt_end_line` (i.e. it trails the
+    /// statement we just printed), consume and return it as an EOL comment.
+    fn take_eol_comment(&mut self, stmt_end_line: usize) -> Option<TriviaItem> {
+        if let Some(item) = self.trivia.front() {
+            if is_eol_comment(item, stmt_end_line) {
+                return self.trivia.pop_front();
             }
         }
-        eol
+        None
     }
 
     /// Flush all remaining trivia whose offset is before `before_byte` as
@@ -140,18 +142,19 @@ impl Printer {
             return;
         }
         let start = node.byte_range().start;
-        let stmt_line = node.range().start.line as usize;
-        let eol = self.inject_trivia_before(start, stmt_line);
+        let end_line = node.range().end.line as usize;
+        self.inject_trivia_before(start);
         if matches!(node.kind(), Kind::EmptyStatement) {
-            // Bare semicolons are stripped, but a deferred EOL comment must
+            // Bare semicolons are stripped, but a trailing EOL comment must
             // still be emitted on its own line.
-            if let Some(item) = eol {
+            if let Some(item) = self.take_eol_comment(end_line) {
                 self.emit_own_line_trivia(&item);
             }
             return;
         }
         self.emit_indent();
         self.print_statement(node);
+        let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
     }
@@ -406,16 +409,17 @@ impl Printer {
             return;
         }
         let start = node.byte_range().start;
-        let stmt_line = node.range().start.line as usize;
-        let eol = self.inject_trivia_before(start, stmt_line);
+        let end_line = node.range().end.line as usize;
+        self.inject_trivia_before(start);
         if matches!(node.kind(), Kind::EmptyStatement) {
-            if let Some(item) = eol {
+            if let Some(item) = self.take_eol_comment(end_line) {
                 self.emit_own_line_trivia(&item);
             }
             return;
         }
         self.emit_indent();
         self.print_statement(node);
+        let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
     }
@@ -505,8 +509,8 @@ impl Printer {
     fn print_is_clause(&mut self, node: Node) {
         // `is` `(` state `)` block
         let start = node.byte_range().start;
-        let stmt_line = node.range().start.line as usize;
-        let eol = self.inject_trivia_before(start, stmt_line);
+        let end_line = node.range().end.line as usize;
+        self.inject_trivia_before(start);
         self.emit_indent();
         self.emit("is (");
         let mut seen_lparen = false;
@@ -524,6 +528,7 @@ impl Printer {
                 }
             }
         }
+        let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
     }
