@@ -30,7 +30,8 @@ fn corpus_no_crash_and_output_reparses() {
                 .expect("should not error on syntax-error input")
                 .output;
             assert_eq!(
-                src, &fmt_output,
+                src,
+                &fmt_output,
                 "{}: syntax-error file was not passed through unchanged",
                 path.display()
             );
