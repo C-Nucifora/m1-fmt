@@ -1,0 +1,21 @@
+[package]
+name = "m1-fmt"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "m1-fmt"
+path = "src/main.rs"
+
+[lib]
+name = "m1_fmt"
+path = "src/lib.rs"
+
+[dependencies]
+m1-core = { path = "../m1-core" }
+
+[dev-dependencies]
+# proptest = "1"     # add later for property tests
+
+[profile.release]
+opt-level = 3
