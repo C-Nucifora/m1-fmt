@@ -10,6 +10,9 @@ pub struct Printer {
     width: usize,
     #[allow(dead_code)]
     max_blank_lines: usize,
+    /// Source end line of the most recently emitted statement, used to preserve
+    /// author blank lines between statements.
+    prev_end_line: Option<usize>,
 }
 
 impl Printer {
@@ -21,6 +24,20 @@ impl Printer {
             trivia,
             width: opts.line_width,
             max_blank_lines: opts.max_blank_lines,
+            prev_end_line: None,
+        }
+    }
+
+    /// Preserve author blank lines between the previous statement and the one
+    /// starting at `start_line`. Over-runs are collapsed later by
+    /// `collapse_blank_lines`; brace-adjacent blanks are stripped after that.
+    fn emit_blank_gap(&mut self, start_line: usize) {
+        if let Some(prev) = self.prev_end_line {
+            if start_line > prev + 1 {
+                for _ in 0..(start_line - prev - 1) {
+                    self.emit_newline();
+                }
+            }
         }
     }
 
@@ -38,8 +55,10 @@ impl Printer {
         self.output.push('\n');
     }
 
-    /// Emit a single own-line trivia item at the current indentation.
+    /// Emit a single own-line trivia item at the current indentation,
+    /// preserving any author blank lines that precede it.
     fn emit_own_line_trivia(&mut self, item: &TriviaItem) {
+        self.emit_blank_gap(item.source_line);
         self.emit_indent();
         if item.text.starts_with("//") {
             self.emit(&format_line_comment(&item.text));
@@ -48,6 +67,9 @@ impl Printer {
             self.emit_block_comment(&item.text);
         }
         self.emit_newline();
+        // A block comment may span multiple source lines.
+        let span = item.text.matches('\n').count();
+        self.prev_end_line = Some(item.source_line + span);
     }
 
     /// Emit a (possibly multi-line) block comment, re-indenting continuation
@@ -148,13 +170,16 @@ impl Printer {
             return;
         }
         let start = node.byte_range().start;
+        let start_line = node.range().start.line as usize;
         let end_line = node.range().end.line as usize;
         self.inject_trivia_before(start);
+        self.emit_blank_gap(start_line);
         self.emit_indent();
         self.print_statement(node);
         let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
+        self.prev_end_line = Some(end_line);
     }
 
     fn print_statement(&mut self, node: Node) {
@@ -381,6 +406,8 @@ impl Printer {
         self.emit("{");
         self.emit_newline();
         self.indent += 1;
+        // Measure blank gaps inside the block from the opening-brace line.
+        self.prev_end_line = Some(node.range().start.line as usize);
         let rbrace = self.find_rbrace(node);
         for child in node.children() {
             match child.kind() {
@@ -409,13 +436,16 @@ impl Printer {
             return;
         }
         let start = node.byte_range().start;
+        let start_line = node.range().start.line as usize;
         let end_line = node.range().end.line as usize;
         self.inject_trivia_before(start);
+        self.emit_blank_gap(start_line);
         self.emit_indent();
         self.print_statement(node);
         let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
+        self.prev_end_line = Some(end_line);
     }
 
     fn print_bare_block(&mut self, node: Node) {
@@ -564,7 +594,47 @@ pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
     let mut p = Printer::new(cst, opts);
     p.print_source_file(cst.root());
     normalize_trailing(&mut p.output, opts.max_blank_lines);
+    strip_brace_adjacent_blanks(&mut p.output);
     p.output
+}
+
+/// Remove blank lines that immediately follow an opening `{` line or
+/// immediately precede a closing `}` line, plus a leading run of blank lines at
+/// the very top of the file. These never carry intent.
+fn strip_brace_adjacent_blanks(output: &mut String) {
+    let lines: Vec<&str> = output.split_inclusive('\n').collect();
+    let is_blank = |s: &str| s.strip_suffix('\n').unwrap_or(s).trim().is_empty();
+    fn trimmed_end(s: &str) -> &str {
+        s.strip_suffix('\n').unwrap_or(s).trim_end()
+    }
+    let mut keep = vec![true; lines.len()];
+
+    for i in 0..lines.len() {
+        if !is_blank(lines[i]) {
+            continue;
+        }
+        // Leading blanks at file top.
+        let prev_nonblank = (0..i).rev().find(|&j| !is_blank(lines[j]));
+        let next_nonblank = (i + 1..lines.len()).find(|&j| !is_blank(lines[j]));
+        match prev_nonblank {
+            None => keep[i] = false, // leading run
+            Some(p) if trimmed_end(lines[p]).ends_with('{') => keep[i] = false,
+            _ => {}
+        }
+        if let Some(n) = next_nonblank {
+            if trimmed_end(lines[n]) == "}" || trimmed_end(lines[n]).starts_with('}') {
+                keep[i] = false;
+            }
+        }
+    }
+
+    let mut result = String::with_capacity(output.len());
+    for (i, line) in lines.iter().enumerate() {
+        if keep[i] {
+            result.push_str(line);
+        }
+    }
+    *output = result;
 }
 
 /// Ensure exactly one final newline and collapse blank runs to `max_blank`.
