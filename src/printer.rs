@@ -144,14 +144,6 @@ impl Printer {
         let start = node.byte_range().start;
         let end_line = node.range().end.line as usize;
         self.inject_trivia_before(start);
-        if matches!(node.kind(), Kind::EmptyStatement) {
-            // Bare semicolons are stripped, but a trailing EOL comment must
-            // still be emitted on its own line.
-            if let Some(item) = self.take_eol_comment(end_line) {
-                self.emit_own_line_trivia(&item);
-            }
-            return;
-        }
         self.emit_indent();
         self.print_statement(node);
         let eol = self.take_eol_comment(end_line);
@@ -168,7 +160,9 @@ impl Printer {
             Kind::WhenStatement => self.print_when(node),
             Kind::ExpandStatement => self.print_expand(node),
             Kind::Block => self.print_bare_block(node),
-            Kind::EmptyStatement => {}
+            // A stray bare semicolon: preserved verbatim to keep the token
+            // sequence identical (semantic-preservation invariant).
+            Kind::EmptyStatement => self.emit(";"),
             _ => self.emit_verbatim(node),
         }
     }
@@ -411,12 +405,6 @@ impl Printer {
         let start = node.byte_range().start;
         let end_line = node.range().end.line as usize;
         self.inject_trivia_before(start);
-        if matches!(node.kind(), Kind::EmptyStatement) {
-            if let Some(item) = self.take_eol_comment(end_line) {
-                self.emit_own_line_trivia(&item);
-            }
-            return;
-        }
         self.emit_indent();
         self.print_statement(node);
         let eol = self.take_eol_comment(end_line);
