@@ -6,15 +6,21 @@ pub struct Printer {
     indent: usize,
     output: String,
     trivia: VecDeque<TriviaItem>,
+    #[allow(dead_code)]
+    width: usize,
+    #[allow(dead_code)]
+    max_blank_lines: usize,
 }
 
 impl Printer {
-    fn new(cst: &Cst) -> Self {
+    fn new(cst: &Cst, opts: &crate::FormatOptions) -> Self {
         let trivia = VecDeque::from(collect_trivia(cst));
         Self {
             indent: 0,
             output: String::new(),
             trivia,
+            width: opts.line_width,
+            max_blank_lines: opts.max_blank_lines,
         }
     }
 
@@ -551,18 +557,19 @@ impl Printer {
 }
 
 pub fn print(cst: &Cst) -> String {
-    let mut p = Printer::new(cst);
+    print_with(cst, &crate::FormatOptions::default())
+}
+
+pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
+    let mut p = Printer::new(cst, opts);
     p.print_source_file(cst.root());
-    normalize_trailing(&mut p.output);
+    normalize_trailing(&mut p.output, opts.max_blank_lines);
     p.output
 }
 
-/// Ensure exactly one final newline and collapse 3+ consecutive blank lines
-/// to 2.
-fn normalize_trailing(output: &mut String) {
-    // Collapse runs of 3+ blank lines to 2.
-    collapse_blank_lines(output);
-    // Trim trailing blank lines, then ensure a single final newline.
+/// Ensure exactly one final newline and collapse blank runs to `max_blank`.
+fn normalize_trailing(output: &mut String, max_blank: usize) {
+    collapse_blank_lines(output, max_blank);
     while output.ends_with("\n\n") {
         output.pop();
     }
@@ -574,14 +581,14 @@ fn normalize_trailing(output: &mut String) {
     }
 }
 
-fn collapse_blank_lines(output: &mut String) {
+fn collapse_blank_lines(output: &mut String, max_blank: usize) {
     let mut result = String::with_capacity(output.len());
     let mut blank_run = 0usize;
     for line in output.split_inclusive('\n') {
         let content = line.strip_suffix('\n').unwrap_or(line);
         if content.trim().is_empty() {
             blank_run += 1;
-            if blank_run <= 2 {
+            if blank_run <= max_blank {
                 result.push_str(line);
             }
         } else {
