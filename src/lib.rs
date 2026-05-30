@@ -7,6 +7,23 @@ use std::path::Path;
 
 pub use diagnostics::{FormatError, FormatWarning};
 
+#[derive(Debug, Clone)]
+pub struct FormatOptions {
+    /// Maximum consecutive blank lines to keep.
+    pub max_blank_lines: usize,
+    /// Hard column ceiling used for wrapping.
+    pub line_width: usize,
+}
+
+impl Default for FormatOptions {
+    fn default() -> Self {
+        FormatOptions {
+            max_blank_lines: 2,
+            line_width: 88,
+        }
+    }
+}
+
 pub struct FormatResult {
     pub output: String,
     pub changed: bool,
@@ -14,6 +31,10 @@ pub struct FormatResult {
 }
 
 pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
+    format_str_with(src, &FormatOptions::default())
+}
+
+pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
     let cst = m1_core::parse(src);
 
     let diags = cst.syntax_diagnostics();
@@ -26,18 +47,23 @@ pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
         });
     }
 
-    let output = printer::print(&cst);
+    let output = printer::print_with(&cst, opts);
     let changed = output != src;
 
-    // Emit line-too-long warnings.
+    // Emit line-too-long warnings for lines that remain over budget after
+    // wrapping (e.g. an unbreakable atom).
     let mut warnings = Vec::new();
     for (line_idx, line) in output.lines().enumerate() {
-        if line.len() > 88 {
+        if line.chars().count() > opts.line_width {
             warnings.push(FormatWarning {
                 kind: diagnostics::WarningKind::LineTooLong,
                 line: line_idx + 1,
-                col: 89,
-                message: format!("line is {} characters (max 88)", line.len()),
+                col: opts.line_width + 1,
+                message: format!(
+                    "line is {} characters (max {})",
+                    line.chars().count(),
+                    opts.line_width
+                ),
             });
         }
     }
@@ -50,6 +76,10 @@ pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
 }
 
 pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
+    format_file_with(path, &FormatOptions::default())
+}
+
+pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
     let src = std::fs::read_to_string(path).map_err(FormatError::IoError)?;
-    format_str(&src)
+    format_str_with(&src, opts)
 }

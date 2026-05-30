@@ -6,15 +6,44 @@ pub struct Printer {
     indent: usize,
     output: String,
     trivia: VecDeque<TriviaItem>,
+    width: usize,
+    #[allow(dead_code)]
+    max_blank_lines: usize,
+    /// Source end line of the most recently emitted statement, used to preserve
+    /// author blank lines between statements.
+    prev_end_line: Option<usize>,
+    /// Width (in columns) the pending end-of-line comment will occupy on the
+    /// final line of the current statement. Counted against the budget only for
+    /// the last element of a wrapped construct (and in the flat-vs-wrap
+    /// decision), so a trailing comment can force a wrap without pushing the
+    /// greedy fill of earlier lines too far left.
+    eol_reserve: usize,
 }
 
 impl Printer {
-    fn new(cst: &Cst) -> Self {
+    fn new(cst: &Cst, opts: &crate::FormatOptions) -> Self {
         let trivia = VecDeque::from(collect_trivia(cst));
         Self {
             indent: 0,
             output: String::new(),
             trivia,
+            width: opts.line_width,
+            max_blank_lines: opts.max_blank_lines,
+            prev_end_line: None,
+            eol_reserve: 0,
+        }
+    }
+
+    /// Preserve author blank lines between the previous statement and the one
+    /// starting at `start_line`. Over-runs are collapsed later by
+    /// `collapse_blank_lines`; brace-adjacent blanks are stripped after that.
+    fn emit_blank_gap(&mut self, start_line: usize) {
+        if let Some(prev) = self.prev_end_line {
+            if start_line > prev + 1 {
+                for _ in 0..(start_line - prev - 1) {
+                    self.emit_newline();
+                }
+            }
         }
     }
 
@@ -32,8 +61,64 @@ impl Printer {
         self.output.push('\n');
     }
 
-    /// Emit a single own-line trivia item at the current indentation.
+    /// Display column of the cursor on the current (last) physical line: the
+    /// number of chars emitted since the most recent newline.
+    fn current_col(&self) -> usize {
+        match self.output.rfind('\n') {
+            Some(i) => self.output[i + 1..].chars().count(),
+            None => self.output.chars().count(),
+        }
+    }
+
+    /// True if `flat`, placed starting at column `start_col`, would push the
+    /// line past the configured width. Multi-line `flat` is measured by its
+    /// longest constituent line (its first line offset by `start_col`).
+    fn exceeds_limit(&self, start_col: usize, flat: &str) -> bool {
+        let lines: Vec<&str> = flat.split('\n').collect();
+        let last = lines.len() - 1;
+        for (i, line) in lines.iter().enumerate() {
+            let mut len = line.chars().count() + if i == 0 { start_col } else { 0 };
+            // The pending EOL comment lands on the statement's final line.
+            if i == last {
+                len += self.eol_reserve;
+            }
+            if len > self.width {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Emit a continuation indent: the current block indent plus two extra
+    /// 4-space units (+8), per the v2 spec §3.3.
+    fn emit_continuation_indent(&mut self) {
+        for _ in 0..self.indent {
+            self.output.push_str("    ");
+        }
+        self.output.push_str("        ");
+    }
+
+    /// Render `f` into a scratch buffer at the current indent WITHOUT mutating
+    /// `self.output` or consuming any trivia, and return what `f` appended.
+    /// Used to measure a node's flat width before deciding whether to wrap.
+    fn trial(&mut self, f: impl FnOnce(&mut Printer)) -> String {
+        let mark = self.output.len();
+        let saved_trivia = self.trivia.clone();
+        let saved_indent = self.indent;
+        let saved_prev_end_line = self.prev_end_line;
+        f(self);
+        let rendered = self.output[mark..].to_string();
+        self.output.truncate(mark);
+        self.trivia = saved_trivia;
+        self.indent = saved_indent;
+        self.prev_end_line = saved_prev_end_line;
+        rendered
+    }
+
+    /// Emit a single own-line trivia item at the current indentation,
+    /// preserving any author blank lines that precede it.
     fn emit_own_line_trivia(&mut self, item: &TriviaItem) {
+        self.emit_blank_gap(item.source_line);
         self.emit_indent();
         if item.text.starts_with("//") {
             self.emit(&format_line_comment(&item.text));
@@ -42,6 +127,9 @@ impl Printer {
             self.emit_block_comment(&item.text);
         }
         self.emit_newline();
+        // A block comment may span multiple source lines.
+        let span = item.text.matches('\n').count();
+        self.prev_end_line = Some(item.source_line + span);
     }
 
     /// Emit a (possibly multi-line) block comment, re-indenting continuation
@@ -81,6 +169,23 @@ impl Printer {
             let item = self.trivia.pop_front().unwrap();
             self.emit_own_line_trivia(&item);
         }
+    }
+
+    /// Width of the pending EOL comment for the statement ending on
+    /// `stmt_end_line`, as it will be rendered (two spaces + normalized text),
+    /// or 0 if none.
+    fn pending_eol_width(&self, stmt_end_line: usize) -> usize {
+        if let Some(item) = self.trivia.front() {
+            if is_eol_comment(item, stmt_end_line) {
+                let rendered = if item.text.starts_with("//") {
+                    format_line_comment(&item.text)
+                } else {
+                    item.text.trim_end().to_string()
+                };
+                return 2 + rendered.chars().count();
+            }
+        }
+        0
     }
 
     /// If the next pending trivia item is on `stmt_end_line` (i.e. it trails the
@@ -142,13 +247,21 @@ impl Printer {
             return;
         }
         let start = node.byte_range().start;
+        let start_line = node.range().start.line as usize;
         let end_line = node.range().end.line as usize;
         self.inject_trivia_before(start);
+        self.emit_blank_gap(start_line);
         self.emit_indent();
+        // Reserve the trailing `;` (statements that carry one) plus any EOL
+        // comment, so a line that is over-budget only because of them wraps.
+        let semi = usize::from(ends_with_semicolon(node.kind()));
+        self.eol_reserve = self.pending_eol_width(end_line) + semi;
         self.print_statement(node);
+        self.eol_reserve = 0;
         let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
+        self.prev_end_line = Some(end_line);
     }
 
     fn print_statement(&mut self, node: Node) {
@@ -289,7 +402,17 @@ impl Printer {
     }
 
     fn emit_arg_list(&mut self, node: Node) {
-        // `(` expr (`,` expr)* `)` — no padding, comma + single space.
+        let start_col = self.current_col();
+        let flat = self.trial(|p| p.emit_arg_list_flat(node));
+        if self.exceeds_limit(start_col, &flat) {
+            self.emit_arg_list_wrapped(node);
+        } else {
+            self.emit(&flat);
+        }
+    }
+
+    /// `(` expr (`,` expr)* `)` on a single line — no padding, comma + space.
+    fn emit_arg_list_flat(&mut self, node: Node) {
         self.emit("(");
         let mut first = true;
         for child in node.children() {
@@ -302,6 +425,58 @@ impl Printer {
                     first = false;
                     self.emit_expr(child);
                 }
+            }
+        }
+        self.emit(")");
+    }
+
+    /// Wrapped argument list: greedy fill, continuation lines at +8, no trailing
+    /// comma before `)`.
+    fn emit_arg_list_wrapped(&mut self, node: Node) {
+        self.emit("(");
+        let args: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| {
+                !matches!(
+                    c.kind(),
+                    Kind::LParen
+                        | Kind::RParen
+                        | Kind::Comma
+                        | Kind::LineComment
+                        | Kind::BlockComment
+                )
+            })
+            .collect();
+        let n = args.len();
+        for (i, arg) in args.iter().enumerate() {
+            let piece = self.trial(|p| p.emit_expr(*arg));
+            let last = i + 1 == n;
+            // The last argument's line also carries `)`, the trailing `;`, and
+            // any EOL comment; a non-last argument is followed by a `,`. Reserve
+            // for whichever applies so the break decision is honest.
+            let tail = if last {
+                1 + self.eol_reserve // ")" + ("; comment" already in eol_reserve)
+            } else {
+                1 // ","
+            };
+            if i == 0 {
+                self.emit(&piece);
+            } else {
+                // We are after a prior arg; a "," was already emitted for it.
+                // Decide: continue on this line (" " + piece) or break.
+                let on_same = self.current_col() + 1 + piece.chars().count() + tail;
+                if on_same > self.width {
+                    self.emit_newline();
+                    self.emit_continuation_indent();
+                    self.emit(&piece);
+                } else {
+                    self.emit(" ");
+                    self.emit(&piece);
+                }
+            }
+            if !last {
+                self.emit(",");
             }
         }
         self.emit(")");
@@ -321,22 +496,92 @@ impl Printer {
     }
 
     fn emit_binary(&mut self, node: Node) {
-        // left operator right — spaces around the operator.
-        let mut parts: Vec<Node> = Vec::new();
-        for child in node.children() {
-            if matches!(child.kind(), Kind::LineComment | Kind::BlockComment) {
-                continue;
-            }
-            parts.push(child);
+        let start_col = self.current_col();
+        let flat = self.trial(|p| p.emit_binary_flat(node));
+        if self.exceeds_limit(start_col, &flat) {
+            self.emit_binary_wrapped(node);
+        } else {
+            self.emit(&flat);
         }
+    }
+
+    fn emit_binary_flat(&mut self, node: Node) {
+        let parts: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+            .collect();
         for (i, child) in parts.iter().enumerate() {
             if i == 1 {
-                // operator
                 self.emit(" ");
                 self.emit(child.text());
                 self.emit(" ");
             } else {
                 self.emit_expr(*child);
+            }
+        }
+    }
+
+    /// Flatten a left-associative binary chain into the first operand followed
+    /// by (operator, operand) pairs, so we can break before each operator.
+    fn flatten_binary<'a>(
+        &self,
+        node: Node<'a>,
+        ops: &mut Vec<(Node<'a>, Node<'a>)>,
+        first: &mut Option<Node<'a>>,
+    ) {
+        let parts: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+            .collect();
+        // parts == [left, operator, right]
+        let left = parts[0];
+        let op = parts[1];
+        let right = parts[2];
+        if left.kind() == Kind::BinaryExpression {
+            self.flatten_binary(left, ops, first);
+        } else if first.is_none() {
+            *first = Some(left);
+        }
+        ops.push((op, right));
+    }
+
+    fn emit_binary_wrapped(&mut self, node: Node) {
+        let mut ops: Vec<(Node, Node)> = Vec::new();
+        let mut first: Option<Node> = None;
+        self.flatten_binary(node, &mut ops, &mut first);
+        // Emit the first operand.
+        if let Some(f) = first {
+            self.emit_expr(f);
+        }
+        // Then each "op operand", breaking before the operator when the pair
+        // would overflow the current line.
+        let n = ops.len();
+        for (idx, (op, operand)) in ops.into_iter().enumerate() {
+            let op_text = op.text().to_string();
+            let piece = self.trial(|p| p.emit_expr(operand));
+            // The last operand's line also carries the trailing `;` and any EOL
+            // comment; reserve for them on the final pair only.
+            let tail = if idx + 1 == n {
+                1 + self.eol_reserve
+            } else {
+                0
+            };
+            // " op operand"
+            let same_line =
+                self.current_col() + 1 + op_text.chars().count() + 1 + piece.chars().count() + tail;
+            if same_line > self.width {
+                self.emit_newline();
+                self.emit_continuation_indent();
+                self.emit(&op_text);
+                self.emit(" ");
+                self.emit(&piece);
+            } else {
+                self.emit(" ");
+                self.emit(&op_text);
+                self.emit(" ");
+                self.emit(&piece);
             }
         }
     }
@@ -375,6 +620,8 @@ impl Printer {
         self.emit("{");
         self.emit_newline();
         self.indent += 1;
+        // Measure blank gaps inside the block from the opening-brace line.
+        self.prev_end_line = Some(node.range().start.line as usize);
         let rbrace = self.find_rbrace(node);
         for child in node.children() {
             match child.kind() {
@@ -403,13 +650,21 @@ impl Printer {
             return;
         }
         let start = node.byte_range().start;
+        let start_line = node.range().start.line as usize;
         let end_line = node.range().end.line as usize;
         self.inject_trivia_before(start);
+        self.emit_blank_gap(start_line);
         self.emit_indent();
+        // Reserve the trailing `;` (statements that carry one) plus any EOL
+        // comment, so a line that is over-budget only because of them wraps.
+        let semi = usize::from(ends_with_semicolon(node.kind()));
+        self.eol_reserve = self.pending_eol_width(end_line) + semi;
         self.print_statement(node);
+        self.eol_reserve = 0;
         let eol = self.take_eol_comment(end_line);
         self.emit_eol(eol);
         self.emit_newline();
+        self.prev_end_line = Some(end_line);
     }
 
     fn print_bare_block(&mut self, node: Node) {
@@ -434,7 +689,12 @@ impl Printer {
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {
                     if seen_lparen {
+                        // Reserve room for the trailing `) {` that follows the
+                        // condition, so the wrap decision accounts for it.
+                        let saved = self.width;
+                        self.width = self.width.saturating_sub(3);
                         self.emit_expr(child);
+                        self.width = saved;
                     }
                 }
             }
@@ -550,19 +810,69 @@ impl Printer {
     }
 }
 
+/// Statement kinds whose printed form ends in a `;` on the same line as their
+/// (potentially wrapped) expression.
+fn ends_with_semicolon(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::LocalDeclaration | Kind::AssignmentStatement | Kind::ExpressionStatement
+    )
+}
+
 pub fn print(cst: &Cst) -> String {
-    let mut p = Printer::new(cst);
+    print_with(cst, &crate::FormatOptions::default())
+}
+
+pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
+    let mut p = Printer::new(cst, opts);
     p.print_source_file(cst.root());
-    normalize_trailing(&mut p.output);
+    normalize_trailing(&mut p.output, opts.max_blank_lines);
+    strip_brace_adjacent_blanks(&mut p.output);
     p.output
 }
 
-/// Ensure exactly one final newline and collapse 3+ consecutive blank lines
-/// to 2.
-fn normalize_trailing(output: &mut String) {
-    // Collapse runs of 3+ blank lines to 2.
-    collapse_blank_lines(output);
-    // Trim trailing blank lines, then ensure a single final newline.
+/// Remove blank lines that immediately follow an opening `{` line or
+/// immediately precede a closing `}` line, plus a leading run of blank lines at
+/// the very top of the file. These never carry intent.
+fn strip_brace_adjacent_blanks(output: &mut String) {
+    let lines: Vec<&str> = output.split_inclusive('\n').collect();
+    let is_blank = |s: &str| s.strip_suffix('\n').unwrap_or(s).trim().is_empty();
+    fn trimmed_end(s: &str) -> &str {
+        s.strip_suffix('\n').unwrap_or(s).trim_end()
+    }
+    let mut keep = vec![true; lines.len()];
+
+    for i in 0..lines.len() {
+        if !is_blank(lines[i]) {
+            continue;
+        }
+        // Leading blanks at file top.
+        let prev_nonblank = (0..i).rev().find(|&j| !is_blank(lines[j]));
+        let next_nonblank = (i + 1..lines.len()).find(|&j| !is_blank(lines[j]));
+        match prev_nonblank {
+            None => keep[i] = false, // leading run
+            Some(p) if trimmed_end(lines[p]).ends_with('{') => keep[i] = false,
+            _ => {}
+        }
+        if let Some(n) = next_nonblank {
+            if trimmed_end(lines[n]) == "}" || trimmed_end(lines[n]).starts_with('}') {
+                keep[i] = false;
+            }
+        }
+    }
+
+    let mut result = String::with_capacity(output.len());
+    for (i, line) in lines.iter().enumerate() {
+        if keep[i] {
+            result.push_str(line);
+        }
+    }
+    *output = result;
+}
+
+/// Ensure exactly one final newline and collapse blank runs to `max_blank`.
+fn normalize_trailing(output: &mut String, max_blank: usize) {
+    collapse_blank_lines(output, max_blank);
     while output.ends_with("\n\n") {
         output.pop();
     }
@@ -574,14 +884,14 @@ fn normalize_trailing(output: &mut String) {
     }
 }
 
-fn collapse_blank_lines(output: &mut String) {
+fn collapse_blank_lines(output: &mut String, max_blank: usize) {
     let mut result = String::with_capacity(output.len());
     let mut blank_run = 0usize;
     for line in output.split_inclusive('\n') {
         let content = line.strip_suffix('\n').unwrap_or(line);
         if content.trim().is_empty() {
             blank_run += 1;
-            if blank_run <= 2 {
+            if blank_run <= max_blank {
                 result.push_str(line);
             }
         } else {
@@ -590,4 +900,61 @@ fn collapse_blank_lines(output: &mut String) {
         }
     }
     *output = result;
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    fn printer() -> Printer {
+        let cst = m1_core::parse("x = 1;\n");
+        Printer::new(&cst, &crate::FormatOptions::default())
+    }
+
+    #[test]
+    fn current_col_counts_since_last_newline() {
+        let mut p = printer();
+        p.emit("abc");
+        assert_eq!(p.current_col(), 3);
+        p.emit_newline();
+        p.emit("de");
+        assert_eq!(p.current_col(), 2);
+    }
+
+    #[test]
+    fn exceeds_limit_boundary() {
+        let p = printer();
+        // 88 chars exactly: not over. 89: over.
+        let s88 = "a".repeat(88);
+        let s89 = "a".repeat(89);
+        assert!(!p.exceeds_limit(0, &s88));
+        assert!(p.exceeds_limit(0, &s89));
+        // Landing column counts toward the budget.
+        assert!(p.exceeds_limit(1, &s88));
+    }
+
+    #[test]
+    fn trial_does_not_mutate_output_or_trivia() {
+        let cst = m1_core::parse("// c\nx = 1;\n");
+        let mut p = Printer::new(&cst, &crate::FormatOptions::default());
+        p.emit("before");
+        let trivia_before = p.trivia.len();
+        let rendered = p.trial(|p| {
+            p.emit("inside");
+            p.flush_remaining_trivia();
+        });
+        // `rendered` captures everything `f` appended (including the flushed
+        // comment), but `trial` must restore `output` and `trivia` afterwards.
+        assert!(rendered.starts_with("inside"));
+        assert_eq!(p.output, "before");
+        assert_eq!(p.trivia.len(), trivia_before);
+    }
+
+    #[test]
+    fn continuation_indent_is_block_plus_eight() {
+        let mut p = printer();
+        p.indent = 1; // 4 spaces of block indent
+        p.emit_continuation_indent();
+        assert_eq!(p.output, " ".repeat(4 + 8));
+    }
 }
