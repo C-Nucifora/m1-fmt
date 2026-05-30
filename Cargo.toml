@@ -12,7 +12,7 @@ name = "m1_fmt"
 path = "src/lib.rs"
 
 [dependencies]
-m1-core = { path = "../m1-core" }
+m1-core = { path = "vendor/m1-core" }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
