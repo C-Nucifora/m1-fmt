@@ -53,9 +53,8 @@ fn binary_chain() -> impl Strategy<Value = String> {
 
 /// A call `Func(arg, arg, ...)`.
 fn call() -> impl Strategy<Value = String> {
-    proptest::collection::vec(atom(), 1..6).prop_map(|args| {
-        format!("Module.Compute({})", args.join(", "))
-    })
+    proptest::collection::vec(atom(), 1..6)
+        .prop_map(|args| format!("Module.Compute({})", args.join(", ")))
 }
 
 /// A whole statement.
