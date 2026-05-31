@@ -17,9 +17,12 @@ function M.setup(opts)
     args = {},
   }, opts.formatter or {})
 
-  conform.setup(vim.tbl_deep_extend("force", {
-    formatters_by_ft = { m1scr = { "m1_fmt" } },
-  }, opts.conform or {}))
+  conform.formatters_by_ft = vim.tbl_extend(
+    "force",
+    conform.formatters_by_ft,
+    { m1scr = { "m1_fmt" } },
+    (opts.conform or {}).formatters_by_ft or {}
+  )
 end
 
 return M
