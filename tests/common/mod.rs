@@ -15,10 +15,10 @@ pub fn corpus_scripts() -> Vec<(PathBuf, String)> {
     if let Ok(entries) = std::fs::read_dir(&corpus_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("m1scr") {
-                if let Ok(src) = std::fs::read_to_string(&path) {
-                    scripts.push((path, src));
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("m1scr")
+                && let Ok(src) = std::fs::read_to_string(&path)
+            {
+                scripts.push((path, src));
             }
         }
     }
