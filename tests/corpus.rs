@@ -24,10 +24,10 @@ fn corpus_no_overlong_lines_except_atoms() {
                 if line.contains("*/") {
                     in_block_comment = false;
                 }
-            } else if let Some(open) = line.rfind("/*") {
-                if !line[open..].contains("*/") {
-                    in_block_comment = true;
-                }
+            } else if let Some(open) = line.rfind("/*")
+                && !line[open..].contains("*/")
+            {
+                in_block_comment = true;
             }
             if entered_block {
                 continue;
