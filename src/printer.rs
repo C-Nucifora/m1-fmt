@@ -1,4 +1,4 @@
-use crate::trivia::{collect_trivia, format_line_comment, is_eol_comment, TriviaItem};
+use crate::trivia::{TriviaItem, collect_trivia, format_line_comment, is_eol_comment};
 use m1_core::{Cst, Kind, Node};
 use std::collections::VecDeque;
 
@@ -38,11 +38,11 @@ impl Printer {
     /// starting at `start_line`. Over-runs are collapsed later by
     /// `collapse_blank_lines`; brace-adjacent blanks are stripped after that.
     fn emit_blank_gap(&mut self, start_line: usize) {
-        if let Some(prev) = self.prev_end_line {
-            if start_line > prev + 1 {
-                for _ in 0..(start_line - prev - 1) {
-                    self.emit_newline();
-                }
+        if let Some(prev) = self.prev_end_line
+            && start_line > prev + 1
+        {
+            for _ in 0..(start_line - prev - 1) {
+                self.emit_newline();
             }
         }
     }
@@ -175,15 +175,15 @@ impl Printer {
     /// `stmt_end_line`, as it will be rendered (two spaces + normalized text),
     /// or 0 if none.
     fn pending_eol_width(&self, stmt_end_line: usize) -> usize {
-        if let Some(item) = self.trivia.front() {
-            if is_eol_comment(item, stmt_end_line) {
-                let rendered = if item.text.starts_with("//") {
-                    format_line_comment(&item.text)
-                } else {
-                    item.text.trim_end().to_string()
-                };
-                return 2 + rendered.chars().count();
-            }
+        if let Some(item) = self.trivia.front()
+            && is_eol_comment(item, stmt_end_line)
+        {
+            let rendered = if item.text.starts_with("//") {
+                format_line_comment(&item.text)
+            } else {
+                item.text.trim_end().to_string()
+            };
+            return 2 + rendered.chars().count();
         }
         0
     }
@@ -191,10 +191,10 @@ impl Printer {
     /// If the next pending trivia item is on `stmt_end_line` (i.e. it trails the
     /// statement we just printed), consume and return it as an EOL comment.
     fn take_eol_comment(&mut self, stmt_end_line: usize) -> Option<TriviaItem> {
-        if let Some(item) = self.trivia.front() {
-            if is_eol_comment(item, stmt_end_line) {
-                return self.trivia.pop_front();
-            }
+        if let Some(item) = self.trivia.front()
+            && is_eol_comment(item, stmt_end_line)
+        {
+            return self.trivia.pop_front();
         }
         None
     }
@@ -854,10 +854,10 @@ fn strip_brace_adjacent_blanks(output: &mut String) {
             Some(p) if trimmed_end(lines[p]).ends_with('{') => keep[i] = false,
             _ => {}
         }
-        if let Some(n) = next_nonblank {
-            if trimmed_end(lines[n]) == "}" || trimmed_end(lines[n]).starts_with('}') {
-                keep[i] = false;
-            }
+        if let Some(n) = next_nonblank
+            && (trimmed_end(lines[n]) == "}" || trimmed_end(lines[n]).starts_with('}'))
+        {
+            keep[i] = false;
         }
     }
 
