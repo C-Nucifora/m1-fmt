@@ -43,11 +43,8 @@ function M.setup(opts)
     -- Default: don't call conform.setup() (it would clobber a conform config
     -- the user set up themselves); register directly into the live tables.
     conform.formatters.m1_fmt = formatter
-    conform.formatters_by_ft = vim.tbl_extend(
-      "force",
-      conform.formatters_by_ft or {},
-      { m1scr = { "m1_fmt" } }
-    )
+    conform.formatters_by_ft =
+      vim.tbl_extend("force", conform.formatters_by_ft or {}, { m1scr = { "m1_fmt" } })
   end
 end
 
