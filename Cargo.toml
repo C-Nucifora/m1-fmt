@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 m1-core = { git = "https://github.com/C-Nucifora/m1-core.git", branch = "main" }
 clap = { version = "4", features = ["derive"] }
+toml = "0.8"
 
 [dev-dependencies]
 proptest = "1"
