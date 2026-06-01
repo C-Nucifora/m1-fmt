@@ -826,8 +826,13 @@ pub fn print(cst: &Cst) -> String {
 pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
     let mut p = Printer::new(cst, opts);
     p.print_source_file(cst.root());
-    normalize_trailing(&mut p.output, opts.max_blank_lines);
+    // Strip brace-adjacent blanks BEFORE collapsing blank runs: stripping can
+    // leave two previously-separated blank lines adjacent, and only a later
+    // collapse pass would merge them — which made a second format pass change
+    // the output (non-idempotent, #19). Doing the strip first is stable in one
+    // pass.
     strip_brace_adjacent_blanks(&mut p.output);
+    normalize_trailing(&mut p.output, opts.max_blank_lines);
     p.output
 }
 
