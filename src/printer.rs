@@ -461,7 +461,25 @@ impl Printer {
                 1 // ","
             };
             if i == 0 {
-                self.emit(&piece);
+                // The first argument is normally emitted inline right after `(`.
+                // But when call-opens have stacked up a long prefix
+                // (`Outer(Inner(Innermost(`…), even the first argument's opening
+                // line can blow the budget with no break point — #14. If that
+                // line overflows *and* the continuation column is further left
+                // than where we are, break after `(` and re-render the argument
+                // at the smaller column so its own nested wrapping recurses.
+                let first_line = piece.split('\n').next().unwrap_or(&piece).chars().count();
+                let cont_col = self.indent * 4 + 8;
+                if self.current_col() + first_line + tail > self.width
+                    && cont_col < self.current_col()
+                {
+                    self.emit_newline();
+                    self.emit_continuation_indent();
+                    let repiece = self.trial(|p| p.emit_expr(*arg));
+                    self.emit(&repiece);
+                } else {
+                    self.emit(&piece);
+                }
             } else {
                 // We are after a prior arg; a "," was already emitted for it.
                 // Decide: continue on this line (" " + piece) or break.
@@ -961,5 +979,26 @@ mod wrap_tests {
         p.indent = 1; // 4 spaces of block indent
         p.emit_continuation_indent();
         assert_eq!(p.output, " ".repeat(4 + 8));
+    }
+
+    // #14: nested call-opens that stack a long prefix on the opening line must
+    // break after `(` rather than leaving a line over budget. The whole-pipeline
+    // check is the meaningful one here.
+    #[test]
+    fn nested_wrapped_args_break_after_open_paren() {
+        let src = "local result = Outer.Compute(Inner.Deep(Innermost.EvenDeeper(\
+                   reallyQuiteLongArgumentNameOne, reallyQuiteLongArgumentNameTwo, \
+                   reallyQuiteLongArgumentNameThree, reallyQuiteLongArgumentNameFour)));\n";
+        let out = crate::format_str(src).unwrap().output;
+        for line in out.lines() {
+            assert!(
+                line.chars().count() <= 88,
+                "line over budget after wrapping: {line:?}"
+            );
+        }
+        // and the result must be stable under a second pass.
+        let again = crate::format_str(&out).unwrap();
+        assert_eq!(again.output, out, "formatting is not idempotent");
+        assert!(!again.changed);
     }
 }
