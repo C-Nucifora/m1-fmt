@@ -27,6 +27,10 @@ struct Args {
     /// Maximum consecutive blank lines to keep
     #[arg(long, default_value_t = 2)]
     max_blank_lines: usize,
+
+    /// Hard column ceiling used for wrapping
+    #[arg(long, default_value_t = 88)]
+    line_width: usize,
 }
 
 /// Print a minimal unified diff between `original` and `formatted`.
@@ -54,7 +58,7 @@ fn main() {
     let args = Args::parse();
     let opts = m1_fmt::FormatOptions {
         max_blank_lines: args.max_blank_lines,
-        ..Default::default()
+        line_width: args.line_width,
     };
     let mut any_changed = false;
     let mut any_error = false;
