@@ -24,13 +24,23 @@ struct Args {
     #[arg(long, default_value = "<stdin>")]
     stdin_filename: String,
 
-    /// Maximum consecutive blank lines to keep
-    #[arg(long, default_value_t = 2)]
-    max_blank_lines: usize,
+    /// Maximum consecutive blank lines to keep (default 2; overrides .m1fmt.toml)
+    #[arg(long)]
+    max_blank_lines: Option<usize>,
 
-    /// Hard column ceiling used for wrapping
-    #[arg(long, default_value_t = 88)]
-    line_width: usize,
+    /// Hard column ceiling used for wrapping (default 88; overrides .m1fmt.toml)
+    #[arg(long)]
+    line_width: Option<usize>,
+}
+
+/// Resolve [`FormatOptions`] for a file/stdin in `dir`, with precedence
+/// CLI flag > `.m1fmt.toml` (discovered upward from `dir`) > built-in default.
+fn resolve_opts(args: &Args, dir: &std::path::Path) -> m1_fmt::FormatOptions {
+    let cfg = m1_fmt::config::discover(dir).unwrap_or_default();
+    m1_fmt::FormatOptions {
+        max_blank_lines: args.max_blank_lines.or(cfg.max_blank_lines).unwrap_or(2),
+        line_width: args.line_width.or(cfg.max_line_length).unwrap_or(88),
+    }
 }
 
 /// Print a minimal unified diff between `original` and `formatted`.
@@ -56,15 +66,13 @@ fn print_diff(name: &str, original: &str, formatted: &str) {
 
 fn main() {
     let args = Args::parse();
-    let opts = m1_fmt::FormatOptions {
-        max_blank_lines: args.max_blank_lines,
-        line_width: args.line_width,
-    };
     let mut any_changed = false;
     let mut any_error = false;
 
     if args.files.is_empty() {
-        // Read from stdin.
+        // Read from stdin. Discover .m1fmt.toml from the working directory.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let opts = resolve_opts(&args, &cwd);
         let mut src = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut src).unwrap();
         match m1_fmt::format_str_with(&src, &opts) {
@@ -93,6 +101,9 @@ fn main() {
         }
     } else {
         for path in &args.files {
+            // Discover .m1fmt.toml upward from the file's own directory.
+            let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let opts = resolve_opts(&args, dir);
             let original = std::fs::read_to_string(path).ok();
             match m1_fmt::format_file_with(path, &opts) {
                 Ok(result) => {
