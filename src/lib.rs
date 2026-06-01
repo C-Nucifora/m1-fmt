@@ -3,6 +3,7 @@ pub mod printer;
 pub mod rules;
 pub mod trivia;
 
+use std::borrow::Cow;
 use std::path::Path;
 
 pub use diagnostics::{FormatError, FormatWarning};
@@ -35,11 +36,21 @@ pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
 }
 
 pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
-    let cst = m1_core::parse(src);
+    // The whole pipeline assumes LF. Normalize CRLF -> LF on input and restore
+    // CRLF on output if the input used it, so brace-adjacent blank stripping and
+    // trailing-newline normalization behave correctly on CRLF files (#18).
+    let uses_crlf = src.contains("\r\n");
+    let lf_src: Cow<str> = if uses_crlf {
+        Cow::Owned(src.replace("\r\n", "\n"))
+    } else {
+        Cow::Borrowed(src)
+    };
+
+    let cst = m1_core::parse(&lf_src);
 
     let diags = cst.syntax_diagnostics();
     if !diags.is_empty() {
-        // Safety: pass through unchanged, do not error.
+        // Safety: pass through the ORIGINAL source unchanged, do not error.
         return Ok(FormatResult {
             output: src.to_string(),
             changed: false,
@@ -47,11 +58,17 @@ pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, 
         });
     }
 
-    let output = printer::print_with(&cst, opts);
+    let lf_output = printer::print_with(&cst, opts);
+    let output = if uses_crlf {
+        lf_output.replace('\n', "\r\n")
+    } else {
+        lf_output
+    };
     let changed = output != src;
 
     // Emit line-too-long warnings for lines that remain over budget after
-    // wrapping (e.g. an unbreakable atom).
+    // wrapping (e.g. an unbreakable atom). `str::lines()` strips the trailing
+    // `\r`, so char counts are correct on CRLF output too.
     let mut warnings = Vec::new();
     for (line_idx, line) in output.lines().enumerate() {
         if line.chars().count() > opts.line_width {
