@@ -23,11 +23,13 @@ function M.setup(opts)
     return
   end
 
-  local formatter = vim.tbl_deep_extend("force", {
+  -- Let opts.formatter override extras (e.g. args), but `command` and
+  -- `stdin` are non-negotiable — m1-fmt is our binary and always reads stdin,
+  -- so force them last rather than let an override silently drop them.
+  local formatter = vim.tbl_deep_extend("force", { args = {} }, opts.formatter or {}, {
     command = bin,
     stdin = true,
-    args = {},
-  }, opts.formatter or {})
+  })
 
   if opts.conform then
     -- Caller opted into plugin-managed conform config: merge our defaults
