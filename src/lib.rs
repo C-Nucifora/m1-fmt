@@ -93,6 +93,80 @@ pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, 
     })
 }
 
+/// Result of formatting a line range: the replacement text and the 0-based,
+/// inclusive line span in the *input* that it replaces (snapped outward to whole
+/// top-level statement boundaries).
+pub struct RangeResult {
+    pub output: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub changed: bool,
+    pub warnings: Vec<FormatWarning>,
+}
+
+/// Format only the top-level statements overlapping the requested line range
+/// (`req_start_line..=req_end_line`, 0-based inclusive).
+///
+/// M1 expression fragments are not independently parseable, but a contiguous run
+/// of *complete* top-level statements is. So the range is snapped outward to the
+/// statement boundaries it touches, those whole lines are formatted as their own
+/// document with the existing pipeline, and the covered span is returned for the
+/// caller (LSP `rangeFormatting` / the `--range` CLI) to splice back in.
+///
+/// Returns `Ok(None)` when no statement overlaps the range, or when the buffer
+/// has syntax errors (an incomplete buffer can't be safely range-formatted — the
+/// caller should fall back to leaving it untouched).
+pub fn format_range(
+    src: &str,
+    req_start_line: usize,
+    req_end_line: usize,
+    opts: &FormatOptions,
+) -> Result<Option<RangeResult>, FormatError> {
+    let cst = m1_core::parse(src);
+    if !cst.syntax_diagnostics().is_empty() {
+        return Ok(None);
+    }
+
+    // Snap the requested range outward to the span of every top-level statement
+    // it intersects. Comments are handled as trivia within those lines.
+    let mut covered: Option<(usize, usize)> = None;
+    for child in cst.root().children() {
+        if matches!(
+            child.kind(),
+            m1_core::Kind::LineComment | m1_core::Kind::BlockComment
+        ) {
+            continue;
+        }
+        let s = child.range().start.line as usize;
+        let e = child.range().end.line as usize;
+        if s <= req_end_line && e >= req_start_line {
+            covered = Some(match covered {
+                Some((cs, ce)) => (cs.min(s), ce.max(e)),
+                None => (s, e),
+            });
+        }
+    }
+
+    let Some((start_line, end_line)) = covered else {
+        return Ok(None);
+    };
+
+    let lines: Vec<&str> = src.split('\n').collect();
+    let slice = lines[start_line..=end_line].join("\n");
+    let result = format_str_with(&slice, opts)?;
+    // The extracted slice has no trailing newline (it is rejoined from lines) but
+    // the formatter always emits one, so compare content ignoring that artifact —
+    // the caller splices `output` back over whole lines regardless.
+    let changed = result.output.trim_end_matches('\n') != slice.trim_end_matches('\n');
+    Ok(Some(RangeResult {
+        output: result.output,
+        start_line,
+        end_line,
+        changed,
+        warnings: result.warnings,
+    }))
+}
+
 pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
     format_file_with(path, &FormatOptions::default())
 }

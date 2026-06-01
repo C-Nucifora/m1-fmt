@@ -58,7 +58,16 @@ safety).
 ```sh
 m1-fmt <file.m1scr>                  # print formatted output to stdout
 m1-fmt --max-blank-lines 1 <file>    # cap consecutive blank lines
+m1-fmt --range 10:14 <file>          # format only lines 10–14, leave the rest as-is
 ```
+
+`--range START:END` (1-based, inclusive) formats only the top-level statements
+overlapping that line range and leaves every other line byte-for-byte unchanged;
+the range is snapped outward to whole statement boundaries. It composes with
+`--check`, `--in-place`, and `--diff`, and backs editor format-on-selection (the
+LSP calls the underlying `format_range` to build `textDocument/rangeFormatting`
+edits). Expression fragments aren't independently parseable, so a range that
+overlaps no complete statement is a no-op.
 
 ## Build & test
 
