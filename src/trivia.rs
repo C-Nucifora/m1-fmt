@@ -36,7 +36,9 @@ fn collect_node(node: Node, source: &str, out: &mut Vec<TriviaItem>) {
 /// Normalize a raw line comment: strip the `//` prefix, normalize to `// ` + body.
 pub fn format_line_comment(raw: &str) -> String {
     let body = raw.strip_prefix("//").unwrap_or(raw);
-    let trimmed = body.trim_start_matches(' ').trim_end();
+    // Trim all leading/trailing whitespace (spaces *and* tabs) so e.g.
+    // `//\tfoo` normalises to `// foo`, not `// \tfoo`.
+    let trimmed = body.trim();
     if trimmed.is_empty() {
         "//".to_string()
     } else {
@@ -61,7 +63,10 @@ mod tests {
         assert_eq!(format_line_comment("// foo"), "// foo");
         assert_eq!(format_line_comment("//  foo"), "// foo");
         assert_eq!(format_line_comment("//   foo"), "// foo");
+        assert_eq!(format_line_comment("//\tfoo"), "// foo");
+        assert_eq!(format_line_comment("//\t  foo \t"), "// foo");
         assert_eq!(format_line_comment("//"), "//");
+        assert_eq!(format_line_comment("//\t"), "//");
     }
 
     #[test]
