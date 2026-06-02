@@ -24,7 +24,10 @@ pub struct FileConfig {
 /// Parse a `.m1fmt.toml` body. Unknown keys are ignored; missing keys stay
 /// `None`. Returns an error string only on malformed TOML.
 pub fn parse(s: &str) -> Result<FileConfig, String> {
-    let value: toml::Value = s.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    // Parse as a TOML table: toml 1.x changed `str::parse::<Value>` to expect a
+    // bare value (not a `key = val` document), so parsing a config into `Value`
+    // fails with "unexpected content". A `Table` parses the document directly.
+    let value: toml::Table = s.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let uint = |key: &str| {
         value
             .get(key)
