@@ -7,8 +7,6 @@ pub struct Printer {
     output: String,
     trivia: VecDeque<TriviaItem>,
     width: usize,
-    #[allow(dead_code)]
-    max_blank_lines: usize,
     /// Source end line of the most recently emitted statement, used to preserve
     /// author blank lines between statements.
     prev_end_line: Option<usize>,
@@ -28,7 +26,6 @@ impl Printer {
             output: String::new(),
             trivia,
             width: opts.line_width,
-            max_blank_lines: opts.max_blank_lines,
             prev_end_line: None,
             eol_reserve: 0,
         }
