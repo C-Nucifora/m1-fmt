@@ -1,5 +1,11 @@
 # Neovim integration
 
+> **Using more than one M1 tool?** The recommended way to set up M1 in Neovim is
+> the unified [nvim-m1](https://github.com/C-Nucifora/nvim-m1) plugin, which wires
+> tree-sitter, `m1-lsp`, `m1-fmt`, and `m1-lint` together behind a single `setup`
+> call. The standalone plugin below configures **only `m1-fmt`** — use it if you
+> want formatting on its own.
+
 `m1-fmt` ships as a lazy.nvim plugin with built-in conform.nvim support.
 
 ## Requirements
