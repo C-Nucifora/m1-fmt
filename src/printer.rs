@@ -554,7 +554,10 @@ impl Printer {
         let left = parts[0];
         let op = parts[1];
         let right = parts[2];
-        if left.kind() == Kind::BinaryExpression {
+        // Only flatten a chain at the SAME operator precedence. A higher-precedence
+        // sub-expression (e.g. `a eq b` nested under an `and`) stays an intact
+        // operand, so its operator is never orphaned onto a continuation line.
+        if left.kind() == Kind::BinaryExpression && binary_op_prec(left) == op_prec(op.text()) {
             self.flatten_binary(left, ops, first);
         } else if first.is_none() {
             *first = Some(left);
@@ -583,15 +586,19 @@ impl Printer {
             } else {
                 0
             };
-            // " op operand"
+            // Decide placement on the operand's first-line width. When breaking,
+            // re-render the operand at the continuation column so any nested
+            // wrapping uses the correct (smaller) column instead of this line's.
+            let first_line = piece.split('\n').next().unwrap_or(&piece).chars().count();
             let same_line =
-                self.current_col() + 1 + op_text.chars().count() + 1 + piece.chars().count() + tail;
+                self.current_col() + 1 + op_text.chars().count() + 1 + first_line + tail;
             if same_line > self.width {
                 self.emit_newline();
                 self.emit_continuation_indent();
                 self.emit(&op_text);
                 self.emit(" ");
-                self.emit(&piece);
+                let repiece = self.trial(|p| p.emit_expr(operand));
+                self.emit(&repiece);
             } else {
                 self.emit(" ");
                 self.emit(&op_text);
@@ -602,11 +609,42 @@ impl Printer {
     }
 
     fn emit_ternary(&mut self, node: Node) {
-        // condition ? consequence : alternative
+        let start_col = self.current_col();
+        let flat = self.trial(|p| p.emit_ternary_flat(node));
+        if self.exceeds_limit(start_col, &flat) {
+            self.emit_ternary_wrapped(node);
+        } else {
+            self.emit(&flat);
+        }
+    }
+
+    /// `condition ? consequence : alternative` on one line.
+    fn emit_ternary_flat(&mut self, node: Node) {
         for child in node.children() {
             match child.kind() {
                 Kind::Question => self.emit(" ? "),
                 Kind::Colon => self.emit(" : "),
+                Kind::LineComment | Kind::BlockComment => {}
+                _ => self.emit_expr(child),
+            }
+        }
+    }
+
+    /// Wrapped ternary: the condition stays on the current line, then `?` and `:`
+    /// each start a continuation line (per the manual's ternary layout).
+    fn emit_ternary_wrapped(&mut self, node: Node) {
+        for child in node.children() {
+            match child.kind() {
+                Kind::Question => {
+                    self.emit_newline();
+                    self.emit_continuation_indent();
+                    self.emit("? ");
+                }
+                Kind::Colon => {
+                    self.emit_newline();
+                    self.emit_continuation_indent();
+                    self.emit(": ");
+                }
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => self.emit_expr(child),
             }
@@ -823,6 +861,37 @@ impl Printer {
             }
         }
     }
+}
+
+/// Relative binding precedence of a binary operator (higher binds tighter),
+/// mirroring the grammar's precedence table. Used to flatten only same-level
+/// chains so wrapping never splits a tighter-binding sub-expression.
+fn op_prec(op: &str) -> u8 {
+    match op {
+        "or" | "||" => 1,
+        "and" | "&&" => 2,
+        "|" => 3,
+        "^" => 4,
+        "&" => 5,
+        "==" | "!=" | "eq" | "neq" => 6,
+        "<" | ">" | "<=" | ">=" => 7,
+        "<<" | ">>" => 8,
+        "+" | "-" => 9,
+        "*" | "/" | "%" => 10,
+        _ => 0,
+    }
+}
+
+/// Precedence of a `BinaryExpression` node's operator (its middle child).
+fn binary_op_prec(node: Node) -> u8 {
+    let op = node
+        .children()
+        .into_iter()
+        .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+        .nth(1)
+        .map(|c| c.text().to_string())
+        .unwrap_or_default();
+    op_prec(&op)
 }
 
 /// Statement kinds whose printed form ends in a `;` on the same line as their
