@@ -91,9 +91,13 @@ fn format_buffer(
 /// CLI flag > `.m1fmt.toml` (discovered upward from `dir`) > built-in default.
 fn resolve_opts(args: &Args, dir: &std::path::Path) -> m1_fmt::FormatOptions {
     let cfg = m1_fmt::config::discover(dir).unwrap_or_default();
+    let d = m1_fmt::FormatOptions::default();
     m1_fmt::FormatOptions {
         max_blank_lines: args.max_blank_lines.or(cfg.max_blank_lines).unwrap_or(2),
         line_width: args.line_width.or(cfg.max_line_length).unwrap_or(88),
+        brace_style: cfg.brace_style.unwrap_or(d.brace_style),
+        indent_style: cfg.indent_style.unwrap_or(d.indent_style),
+        indent_width: cfg.indent_width.unwrap_or(d.indent_width),
     }
 }
 

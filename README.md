@@ -50,6 +50,14 @@ safety).
 
 ## Formatting behavior
 
+- **Manual-correct style by default:** Allman braces (each brace on its own line)
+  and tab indentation, per the M1 Build Development Manual. Override in
+  `.m1fmt.toml` for a different house style:
+  ```toml
+  brace_style  = "allman"   # or "kr"
+  indent_style = "tab"      # or "spaces"
+  indent_width = 4          # columns per level (tab display width / space count)
+  ```
 - Consistent indentation, operator spacing, and brace/statement layout.
 - **Line-wrapping** at the width budget: argument lists (greedy fill, no trailing
   comma), binary chains (break before operators), and `if` conditions, accounting

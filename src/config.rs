@@ -19,10 +19,16 @@ pub struct FileConfig {
     pub max_line_length: Option<usize>,
     /// Maps to `FormatOptions::max_blank_lines`.
     pub max_blank_lines: Option<usize>,
+    /// Maps to `FormatOptions::brace_style` (`"allman"` | `"kr"`).
+    pub brace_style: Option<crate::BraceStyle>,
+    /// Maps to `FormatOptions::indent_style` (`"tab"` | `"spaces"`).
+    pub indent_style: Option<crate::IndentStyle>,
+    /// Maps to `FormatOptions::indent_width`.
+    pub indent_width: Option<usize>,
 }
 
 /// Parse a `.m1fmt.toml` body. Unknown keys are ignored; missing keys stay
-/// `None`. Returns an error string only on malformed TOML.
+/// `None`. Returns an error string only on malformed TOML or an invalid value.
 pub fn parse(s: &str) -> Result<FileConfig, String> {
     // Parse as a TOML table: toml 1.x changed `str::parse::<Value>` to expect a
     // bare value (not a `key = val` document), so parsing a config into `Value`
@@ -35,9 +41,24 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
             .filter(|i| *i >= 0)
             .map(|i| i as usize)
     };
+    let brace_style = match value.get("brace_style").and_then(|v| v.as_str()) {
+        None => None,
+        Some("allman") => Some(crate::BraceStyle::Allman),
+        Some("kr") | Some("k&r") | Some("knr") => Some(crate::BraceStyle::KAndR),
+        Some(other) => return Err(format!("invalid brace_style: {other}")),
+    };
+    let indent_style = match value.get("indent_style").and_then(|v| v.as_str()) {
+        None => None,
+        Some("tab") | Some("tabs") => Some(crate::IndentStyle::Tab),
+        Some("space") | Some("spaces") => Some(crate::IndentStyle::Spaces),
+        Some(other) => return Err(format!("invalid indent_style: {other}")),
+    };
     Ok(FileConfig {
         max_line_length: uint("max_line_length"),
         max_blank_lines: uint("max_blank_lines"),
+        brace_style,
+        indent_style,
+        indent_width: uint("indent_width"),
     })
 }
 

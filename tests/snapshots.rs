@@ -78,6 +78,7 @@ fn test_blank_lines_max1() {
         &m1_fmt::FormatOptions {
             max_blank_lines: 1,
             line_width: 88,
+            ..Default::default()
         },
     );
 }
