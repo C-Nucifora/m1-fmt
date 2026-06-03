@@ -5,7 +5,7 @@ use std::process;
 #[derive(Parser, Debug)]
 #[command(name = "m1-fmt", about = "Autoformatter for MoTeC M1 scripts")]
 struct Args {
-    /// Files to format (reads from stdin if none given)
+    /// Files to format (a lone `-`, or no files, reads from stdin)
     files: Vec<PathBuf>,
 
     /// Check mode: exit 1 if any file would change, don't write
@@ -119,9 +119,15 @@ fn print_diff(name: &str, original: &str, formatted: &str) {
 }
 
 fn main() {
-    let args = Args::parse();
+    let mut args = Args::parse();
     let mut any_changed = false;
     let mut any_error = false;
+
+    // A lone `-` is the conventional spelling for "read standard input"; treat it
+    // the same as passing no file arguments at all (matches rustfmt/black/gofmt).
+    if args.files.len() == 1 && args.files[0].as_os_str() == "-" {
+        args.files.clear();
+    }
 
     let range = match args.range.as_deref() {
         None => None,
