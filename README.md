@@ -99,11 +99,12 @@ drawn from any real project.
 
 ## License
 
-Not yet chosen — decided by the repository owner. Treated as proprietary until
-then.
-
-## License
-
 Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later) — see [LICENSE](LICENSE).
 
 Copyright (C) 2026 The M1 Tools authors.
+
+## Trademark
+
+Independent, community-built open-source tooling for the MoTeC® M1 script
+language. Not affiliated with, authorised, or endorsed by MoTeC Pty Ltd.
+"MoTeC" and "M1" are trademarks of MoTeC Pty Ltd.
