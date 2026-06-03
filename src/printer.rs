@@ -356,7 +356,17 @@ impl Printer {
         // target operator value ;
         for child in node.children() {
             match child.kind() {
-                Kind::Assign | Kind::PlusEq | Kind::MinusEq | Kind::StarEq | Kind::SlashEq => {
+                Kind::Assign
+                | Kind::PlusEq
+                | Kind::MinusEq
+                | Kind::StarEq
+                | Kind::SlashEq
+                | Kind::PercentEq
+                | Kind::AmpEq
+                | Kind::PipeEq
+                | Kind::CaretEq
+                | Kind::LtLtEq
+                | Kind::GtGtEq => {
                     self.emit(" ");
                     self.emit(child.text());
                     self.emit(" ");

@@ -39,6 +39,12 @@ fn test_operator_spacing() {
     run_snapshot("operator_spacing");
 }
 #[test]
+fn test_compound_assignment() {
+    // Every compound-assignment operator must be surrounded by spaces — including
+    // %= &= |= ^= <<= >>=, which were added to the grammar in v0.4.0.
+    run_snapshot("compound_assignment");
+}
+#[test]
 fn test_brace_placement() {
     run_snapshot("brace_placement");
 }

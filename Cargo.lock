@@ -298,8 +298,8 @@ checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "m1-core"
-version = "0.4.0"
-source = "git+https://github.com/C-Nucifora/m1-core.git?tag=v0.4.0#95653cc52108aeddb4596a32cc93cd030d3ea9d6"
+version = "0.4.1"
+source = "git+https://github.com/C-Nucifora/m1-core.git?tag=v0.4.1#dc0fcd93a6cc1cda118a30ad9b1af60864af2894"
 dependencies = [
  "tree-sitter",
  "tree-sitter-m1",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "m1-fmt"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "clap",
  "m1-core",
