@@ -16,6 +16,9 @@ pub struct Printer {
     /// decision), so a trailing comment can force a wrap without pushing the
     /// greedy fill of earlier lines too far left.
     eol_reserve: usize,
+    indent_style: crate::IndentStyle,
+    indent_width: usize,
+    brace_style: crate::BraceStyle,
 }
 
 impl Printer {
@@ -28,7 +31,27 @@ impl Printer {
             width: opts.line_width,
             prev_end_line: None,
             eol_reserve: 0,
+            indent_style: opts.indent_style,
+            indent_width: opts.indent_width,
+            brace_style: opts.brace_style,
         }
+    }
+
+    /// Push `n` indent levels to the output (a tab each, or `indent_width` spaces).
+    fn push_levels(&mut self, n: usize) {
+        match self.indent_style {
+            crate::IndentStyle::Tab => (0..n).for_each(|_| self.output.push('\t')),
+            crate::IndentStyle::Spaces => {
+                (0..n * self.indent_width).for_each(|_| self.output.push(' '))
+            }
+        }
+    }
+
+    /// Display width of `s` in columns, expanding tabs to `indent_width`.
+    fn visual_width(&self, s: &str) -> usize {
+        s.chars()
+            .map(|c| if c == '\t' { self.indent_width } else { 1 })
+            .sum()
     }
 
     /// Preserve author blank lines between the previous statement and the one
@@ -49,9 +72,8 @@ impl Printer {
     }
 
     fn emit_indent(&mut self) {
-        for _ in 0..self.indent {
-            self.output.push_str("    ");
-        }
+        let n = self.indent;
+        self.push_levels(n);
     }
 
     fn emit_newline(&mut self) {
@@ -59,12 +81,13 @@ impl Printer {
     }
 
     /// Display column of the cursor on the current (last) physical line: the
-    /// number of chars emitted since the most recent newline.
+    /// visual width emitted since the most recent newline (tabs expanded).
     fn current_col(&self) -> usize {
-        match self.output.rfind('\n') {
-            Some(i) => self.output[i + 1..].chars().count(),
-            None => self.output.chars().count(),
-        }
+        let line = match self.output.rfind('\n') {
+            Some(i) => &self.output[i + 1..],
+            None => &self.output[..],
+        };
+        self.visual_width(line)
     }
 
     /// True if `flat`, placed starting at column `start_col`, would push the
@@ -74,7 +97,7 @@ impl Printer {
         let lines: Vec<&str> = flat.split('\n').collect();
         let last = lines.len() - 1;
         for (i, line) in lines.iter().enumerate() {
-            let mut len = line.chars().count() + if i == 0 { start_col } else { 0 };
+            let mut len = self.visual_width(line) + if i == 0 { start_col } else { 0 };
             // The pending EOL comment lands on the statement's final line.
             if i == last {
                 len += self.eol_reserve;
@@ -87,12 +110,10 @@ impl Printer {
     }
 
     /// Emit a continuation indent: the current block indent plus two extra
-    /// 4-space units (+8), per the v2 spec §3.3.
+    /// indent levels (+8 columns at the default width), per the v2 spec §3.3.
     fn emit_continuation_indent(&mut self) {
-        for _ in 0..self.indent {
-            self.output.push_str("    ");
-        }
-        self.output.push_str("        ");
+        let n = self.indent + 2;
+        self.push_levels(n);
     }
 
     /// Render `f` into a scratch buffer at the current indent WITHOUT mutating
@@ -466,7 +487,7 @@ impl Printer {
                 // than where we are, break after `(` and re-render the argument
                 // at the smaller column so its own nested wrapping recurses.
                 let first_line = piece.split('\n').next().unwrap_or(&piece).chars().count();
-                let cont_col = self.indent * 4 + 8;
+                let cont_col = (self.indent + 2) * self.indent_width;
                 if self.current_col() + first_line + tail > self.width
                     && cont_col < self.current_col()
                 {
@@ -666,11 +687,40 @@ impl Printer {
 
     // ---- Block statements -------------------------------------------------
 
-    /// Print a `{ ... }` block. Assumes the caller has already emitted the
-    /// opening context (e.g. `if (cond) `). Emits `{`, the indented body, and
-    /// the closing `}` at the current indent (without a trailing newline).
-    fn print_block(&mut self, node: Node) {
-        self.emit("{");
+    /// Emit the opening brace of a block. When `attached` (the block follows an
+    /// inline opener such as `if (cond)`), the Allman style puts the brace on its
+    /// own line aligned with the keyword, while K&R appends ` {`. A standalone
+    /// (bare) block just emits `{` at the already-written indent.
+    fn emit_block_open(&mut self, attached: bool) {
+        if !attached {
+            self.emit("{");
+            return;
+        }
+        match self.brace_style {
+            crate::BraceStyle::Allman => {
+                self.emit_newline();
+                self.emit_indent();
+                self.emit("{");
+            }
+            crate::BraceStyle::KAndR => self.emit(" {"),
+        }
+    }
+
+    /// Width reserved on the opener's last line for what follows the `)` before
+    /// the block: `) {` (3) for K&R, just `)` (1) for Allman (brace next line).
+    fn close_paren_reserve(&self) -> usize {
+        match self.brace_style {
+            crate::BraceStyle::Allman => 1,
+            crate::BraceStyle::KAndR => 3,
+        }
+    }
+
+    /// Print a `{ ... }` block. The caller has emitted the opening context up to
+    /// (but not including) the brace. Emits the opening brace (per brace style
+    /// when `attached`), the indented body, and the closing `}` at the current
+    /// indent (without a trailing newline).
+    fn print_block(&mut self, node: Node, attached: bool) {
+        self.emit_block_open(attached);
         self.emit_newline();
         self.indent += 1;
         // Measure blank gaps inside the block from the opening-brace line.
@@ -721,7 +771,7 @@ impl Printer {
     }
 
     fn print_bare_block(&mut self, node: Node) {
-        self.print_block(node);
+        self.print_block(node, false);
     }
 
     fn print_if(&mut self, node: Node) {
@@ -735,9 +785,9 @@ impl Printer {
                     seen_lparen = true;
                 }
                 Kind::RParen => {
-                    self.emit(") ");
+                    self.emit(")");
                 }
-                Kind::Block => self.print_block(child),
+                Kind::Block => self.print_block(child, true),
                 Kind::ElseClause => self.print_else_clause(child),
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {
@@ -745,7 +795,7 @@ impl Printer {
                         // Reserve room for the trailing `) {` that follows the
                         // condition, so the wrap decision accounts for it.
                         let saved = self.width;
-                        self.width = self.width.saturating_sub(3);
+                        self.width = self.width.saturating_sub(self.close_paren_reserve());
                         self.emit_expr(child);
                         self.width = saved;
                     }
@@ -755,13 +805,24 @@ impl Printer {
     }
 
     fn print_else_clause(&mut self, node: Node) {
-        // `else` (if_statement | block)
-        self.emit(" else ");
+        // `else` (if_statement | block). Allman puts `else` on its own line
+        // after the closing brace; K&R keeps `} else` together.
+        match self.brace_style {
+            crate::BraceStyle::Allman => {
+                self.emit_newline();
+                self.emit_indent();
+                self.emit("else");
+            }
+            crate::BraceStyle::KAndR => self.emit(" else"),
+        }
         for child in node.children() {
             match child.kind() {
                 Kind::Else => {}
-                Kind::Block => self.print_block(child),
-                Kind::IfStatement => self.print_if(child),
+                Kind::Block => self.print_block(child, true),
+                Kind::IfStatement => {
+                    self.emit(" ");
+                    self.print_if(child);
+                }
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {}
             }
@@ -779,10 +840,10 @@ impl Printer {
                 Kind::When => {}
                 Kind::LParen => seen_lparen = true,
                 Kind::RParen => {
-                    self.emit(") ");
+                    self.emit(")");
                 }
                 Kind::LBrace => {
-                    self.emit("{");
+                    self.emit_block_open(true);
                     self.emit_newline();
                     self.indent += 1;
                     in_body = true;
@@ -819,8 +880,8 @@ impl Printer {
             match child.kind() {
                 Kind::Is => {}
                 Kind::LParen => seen_lparen = true,
-                Kind::RParen => self.emit(") "),
-                Kind::Block => self.print_block(child),
+                Kind::RParen => self.emit(")"),
+                Kind::Block => self.print_block(child, true),
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {
                     if seen_lparen {
@@ -845,8 +906,8 @@ impl Printer {
                 Kind::LParen => seen_lparen = true,
                 Kind::Assign => self.emit(" = "),
                 Kind::To => self.emit(" to "),
-                Kind::RParen => self.emit(") "),
-                Kind::Block => self.print_block(child),
+                Kind::RParen => self.emit(")"),
+                Kind::Block => self.print_block(child, true),
                 Kind::Identifier if seen_lparen && expr_index == 0 => {
                     self.emit(child.text());
                     expr_index += 1;
@@ -1042,9 +1103,19 @@ mod wrap_tests {
     #[test]
     fn continuation_indent_is_block_plus_eight() {
         let mut p = printer();
+        p.indent_style = crate::IndentStyle::Spaces;
+        p.indent_width = 4;
         p.indent = 1; // 4 spaces of block indent
         p.emit_continuation_indent();
         assert_eq!(p.output, " ".repeat(4 + 8));
+    }
+
+    #[test]
+    fn continuation_indent_uses_tabs_by_default() {
+        let mut p = printer();
+        p.indent = 1;
+        p.emit_continuation_indent();
+        assert_eq!(p.output, "\t".repeat(1 + 2)); // block + 2 levels, as tabs
     }
 
     // #14: nested call-opens that stack a long prefix on the opening line must

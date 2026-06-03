@@ -9,6 +9,7 @@ fn fmt(src: &str) -> String {
         &FormatOptions {
             max_blank_lines: 2,
             line_width: 88,
+            ..Default::default()
         },
     )
     .unwrap()

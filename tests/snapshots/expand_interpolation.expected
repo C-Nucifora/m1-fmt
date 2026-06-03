@@ -1,3 +1,4 @@
-expand (SEG = 1 to 6) {
-    Channel.$(SEG).Value = 0;
+expand (SEG = 1 to 6)
+{
+	Channel.$(SEG).Value = 0;
 }

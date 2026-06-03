@@ -9,12 +9,38 @@ use std::path::Path;
 
 pub use diagnostics::{FormatError, FormatWarning};
 
+/// Indentation character. The M1 manual mandates tabs, so that is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndentStyle {
+    #[default]
+    Tab,
+    Spaces,
+}
+
+/// Brace placement. The M1 manual mandates Allman ("a separate line for each
+/// brace"), so that is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BraceStyle {
+    #[default]
+    Allman,
+    /// K&R / "one true brace": opening brace on the keyword line.
+    KAndR,
+}
+
 #[derive(Debug, Clone)]
 pub struct FormatOptions {
     /// Maximum consecutive blank lines to keep.
     pub max_blank_lines: usize,
     /// Hard column ceiling used for wrapping.
     pub line_width: usize,
+    /// Indentation character (default tabs, per the manual).
+    pub indent_style: IndentStyle,
+    /// Columns one indent level occupies — the number of spaces when
+    /// `indent_style` is `Spaces`, and the assumed display width of a tab when it
+    /// is `Tab` (used only for the wrapping column math).
+    pub indent_width: usize,
+    /// Opening-brace placement (default Allman, per the manual).
+    pub brace_style: BraceStyle,
 }
 
 impl Default for FormatOptions {
@@ -22,6 +48,9 @@ impl Default for FormatOptions {
         FormatOptions {
             max_blank_lines: 2,
             line_width: 88,
+            indent_style: IndentStyle::default(),
+            indent_width: 4,
+            brace_style: BraceStyle::default(),
         }
     }
 }
