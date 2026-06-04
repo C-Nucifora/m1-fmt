@@ -206,6 +206,10 @@ fn main() {
                     for w in &result.warnings {
                         eprintln!("{}:{}: warning: {}", path.display(), w.line, w.message);
                     }
+                    // The bare-stdout case must print unconditionally (mirroring
+                    // the stdin branch); gating it on `changed` truncated an
+                    // already-formatted file to empty (#59). `-i`/`--diff`/
+                    // `--check` stay gated on `changed`.
                     if result.changed {
                         any_changed = true;
                         if args.check {
@@ -220,6 +224,8 @@ fn main() {
                         } else {
                             print!("{}", result.output);
                         }
+                    } else if !args.check && !args.diff && !args.in_place {
+                        print!("{}", result.output);
                     }
                 }
                 Err(m1_fmt::FormatError::SyntaxErrors(diags)) => {
