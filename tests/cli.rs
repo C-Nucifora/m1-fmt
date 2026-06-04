@@ -78,3 +78,40 @@ fn already_formatted_file_arg_prints_content() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// #58: a valid MoTeC `.m1scr` may contain Windows-1252 bytes (e.g. a degree
+/// sign `0xB0` = `°` in a comment). A strict UTF-8 read rejected these with
+/// "stream did not contain valid UTF-8" in every mode. The read must route
+/// through the shared tolerant decoder (UTF-8 with a Windows-1252 fallback)
+/// so fmt processes such files instead of erroring.
+#[test]
+fn windows1252_byte_is_decoded_not_rejected() {
+    let dir = std::env::temp_dir();
+    let path = dir.join("m1fmt_w1252_test.m1scr");
+    // `\xb0` is the Windows-1252 (and Latin-1) encoding of `°` in a comment.
+    std::fs::write(&path, b"// yaw \xb0/s\n[\n]\n").unwrap();
+    let arg = path.to_str().unwrap();
+
+    // --check must not emit the UTF-8 decode error.
+    let (_, check_stderr, check_code) = run_with_file(&["--check", arg]);
+    assert!(
+        !check_stderr.contains("valid UTF-8"),
+        "--check must not reject Windows-1252 input; stderr: {check_stderr}"
+    );
+    assert_ne!(check_code, Some(2), "stderr: {check_stderr}");
+
+    // Format (file-arg → stdout) must also succeed and emit the decoded `°`.
+    let (fmt_stdout, fmt_stderr, fmt_code) = run_with_file(&[arg]);
+    assert!(
+        !fmt_stderr.contains("valid UTF-8"),
+        "format must not reject Windows-1252 input; stderr: {fmt_stderr}"
+    );
+    assert_eq!(fmt_code, Some(0), "stderr: {fmt_stderr}");
+    assert!(
+        String::from_utf8_lossy(&fmt_stdout).contains('°'),
+        "the decoded degree sign must survive formatting; stdout: {:?}",
+        String::from_utf8_lossy(&fmt_stdout)
+    );
+
+    let _ = std::fs::remove_file(&path);
+}

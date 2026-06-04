@@ -187,11 +187,12 @@ fn main() {
             // Discover .m1fmt.toml upward from the file's own directory.
             let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
             let opts = resolve_opts(&args, dir);
-            let original = std::fs::read_to_string(path).ok();
-            let read = match &original {
-                Some(s) => Ok(s.clone()),
-                None => std::fs::read_to_string(path).map_err(m1_fmt::FormatError::IoError),
-            };
+            // `.m1scr` may carry Windows-1252 bytes (e.g. `°` in a comment);
+            // decode tolerantly via the shared workspace decoder so a valid
+            // MoTeC script is not rejected by a strict UTF-8 read (#58). The
+            // diff path reuses the same decoded text as the original.
+            let read = m1_workspace::read_text(path).map_err(m1_fmt::FormatError::IoError);
+            let original = read.as_ref().ok().cloned();
             let outcome = read.and_then(|src| {
                 format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
                     m1_fmt::FormatResult {
