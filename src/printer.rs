@@ -749,6 +749,16 @@ impl Printer {
         self.indent -= 1;
         self.emit_indent();
         self.emit("}");
+        // Blank-gap arithmetic for whatever follows this block (a sibling
+        // statement, an own-line comment, or the next `is`-clause) must be
+        // measured from the closing `}` line, not the last *inner* statement.
+        // Inner statements shift their source line when fmt wraps them, but the
+        // `}` and any following token shift together, so the brace-relative gap
+        // is invariant — fixing the non-idempotent blank before a comment that
+        // precedes an `is`-clause (#60).
+        if let Some(line) = self.find_rbrace_line(node) {
+            self.prev_end_line = Some(line);
+        }
     }
 
     fn find_rbrace(&self, node: Node) -> Option<usize> {
@@ -756,6 +766,13 @@ impl Printer {
             .into_iter()
             .find(|c| c.kind() == Kind::RBrace)
             .map(|c| c.byte_range().start)
+    }
+
+    fn find_rbrace_line(&self, node: Node) -> Option<usize> {
+        node.children()
+            .into_iter()
+            .find(|c| c.kind() == Kind::RBrace)
+            .map(|c| c.range().start.line as usize)
     }
 
     fn print_block_statement(&mut self, node: Node) {

@@ -81,6 +81,39 @@ fn crlf_input_formats_and_preserves_crlf() {
     assert_eq!(out, out2);
 }
 
+/// #60: a statement that fmt *wraps* inside one `is`-block shifts source-line
+/// geometry between passes. The blank gap before the own-line comment preceding
+/// the next `is`-clause was measured from raw source line numbers (the last
+/// inner statement's end vs the comment's start), which ignored the intervening
+/// `}` line and drifted under wrapping — adding a blank line on the 2nd pass.
+/// `fmt∘fmt` must equal `fmt`.
+#[test]
+fn wrapped_stmt_then_comment_before_is_clause_is_idempotent() {
+    let src = "when (Value)\n\
+               {\n\
+               \tis (Emergency)\n\
+               \t{\n\
+               \t\tInverter Active = SomeReallyLongFunctionName.ThatWrapsAcross(ArgumentOne, ArgumentTwo, ArgThree);\n\
+               \t}\n\
+               \t// a latching fault has occured\n\
+               \tis (Latching Fault)\n\
+               \t{\n\
+               \t\tValue = Drive State.Idle;\n\
+               \t}\n\
+               }\n";
+    let once = m1_fmt::format_str(src).unwrap().output;
+    let twice = m1_fmt::format_str(&once).unwrap().output;
+    assert_eq!(
+        once, twice,
+        "format must be idempotent across a wrapped statement before an is-clause comment\n--- first ---\n{once}\n--- second ---\n{twice}"
+    );
+    // Sanity: the wrapped statement really does span two output lines.
+    assert!(
+        once.contains("ThatWrapsAcross(ArgumentOne,\n"),
+        "test precondition: the long assignment should wrap"
+    );
+}
+
 /// #18: brace-adjacent blank stripping must work on CRLF files (the old
 /// `ends_with('{')` check failed on a `"...{\r"` line).
 #[test]
