@@ -201,6 +201,9 @@ pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
 }
 
 pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
-    let src = std::fs::read_to_string(path).map_err(FormatError::IoError)?;
+    // `.m1scr` is MoTeC source: UTF-8 in practice but may carry Windows-1252
+    // bytes (e.g. `°` = 0xB0 in a comment). Decode tolerantly via the shared
+    // workspace decoder rather than failing the strict UTF-8 read (#58).
+    let src = m1_workspace::read_text(path).map_err(FormatError::IoError)?;
     format_str_with(&src, opts)
 }
