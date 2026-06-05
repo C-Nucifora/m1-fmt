@@ -180,15 +180,33 @@ pub fn format_range(
         return Ok(None);
     };
 
+    // Preserve the document's line ending across the range path. Splitting on
+    // `'\n'` leaves a trailing `'\r'` on each line of a CRLF file; rejoining with
+    // `'\n'` would drop it on the slice's last line, so the slice loses its
+    // `\r\n` sequence and `format_str_with` emits LF-only output — corrupting the
+    // CRLF buffer when the caller splices it back (#65). Strip the `'\r'` per line
+    // to build a clean LF slice, then restore CRLF on the output if the source
+    // used it.
+    let uses_crlf = src.contains("\r\n");
     let lines: Vec<&str> = src.split('\n').collect();
-    let slice = lines[start_line..=end_line].join("\n");
+    let slice = lines[start_line..=end_line]
+        .iter()
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n");
     let result = format_str_with(&slice, opts)?;
     // The extracted slice has no trailing newline (it is rejoined from lines) but
     // the formatter always emits one, so compare content ignoring that artifact —
-    // the caller splices `output` back over whole lines regardless.
+    // the caller splices `output` back over whole lines regardless. Compare on the
+    // LF form so the line-ending normalization below is not itself a "change".
     let changed = result.output.trim_end_matches('\n') != slice.trim_end_matches('\n');
+    let output = if uses_crlf {
+        result.output.replace('\n', "\r\n")
+    } else {
+        result.output
+    };
     Ok(Some(RangeResult {
-        output: result.output,
+        output,
         start_line,
         end_line,
         changed,

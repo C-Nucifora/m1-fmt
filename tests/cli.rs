@@ -18,6 +18,10 @@ fn run_with_file(args: &[&str]) -> (Vec<u8>, String, Option<i32>) {
 }
 
 fn run_with_stdin(args: &[&str], input: &str) -> (String, String, Option<i32>) {
+    run_with_stdin_bytes(args, input.as_bytes())
+}
+
+fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> (String, String, Option<i32>) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
         .args(args)
         .stdin(Stdio::piped())
@@ -25,12 +29,7 @@ fn run_with_stdin(args: &[&str], input: &str) -> (String, String, Option<i32>) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn m1-fmt");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
     let out = child.wait_with_output().unwrap();
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -114,4 +113,57 @@ fn windows1252_byte_is_decoded_not_rejected() {
     );
 
     let _ = std::fs::remove_file(&path);
+}
+
+/// #68: the in-place rewrite must be atomic — write to a temp file in the same
+/// directory then rename over the target — so an interruption can never leave the
+/// source truncated. A successful `-i` must produce the formatted content and
+/// leave no temp file behind in the directory.
+#[test]
+fn in_place_write_is_atomic_and_leaves_no_temp_file() {
+    let dir = std::env::temp_dir().join(format!("m1fmt_atomic_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("script.m1scr");
+    std::fs::write(&path, "local x=1;\n").unwrap();
+
+    let (_, stderr, code) = run_with_file(&["-i", path.to_str().unwrap()]);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+
+    // Content was rewritten in place.
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(written, "local x = 1;\n");
+
+    // No temp/sidecar files were left in the directory — only the target remains.
+    let remaining: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![std::ffi::OsString::from("script.m1scr")],
+        "atomic write left a stray temp file: {remaining:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #67: the stdin path must decode non-UTF-8 (Windows-1252) bytes tolerantly,
+/// the same way the file path does, instead of panicking on the strict
+/// `read_to_string().unwrap()`. A `°` is the single CP1252 byte `0xB0`, which is
+/// not valid UTF-8; piping such a valid M1 script must format cleanly (exit 0)
+/// and surface the decoded `°`, not crash with "stream did not contain valid
+/// UTF-8" (exit 101).
+#[test]
+fn stdin_windows1252_byte_is_decoded_not_panicked() {
+    let input: &[u8] = b"local x = 1; // \xb0/s\n";
+    let (stdout, stderr, code) = run_with_stdin_bytes(&[], input);
+    assert!(
+        !stderr.contains("valid UTF-8") && !stderr.contains("panicked"),
+        "stdin must not panic on Windows-1252 input; stderr: {stderr}"
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert!(
+        stdout.contains('°'),
+        "the decoded degree sign must survive formatting via stdin; stdout: {stdout:?}"
+    );
 }

@@ -1,12 +1,18 @@
 use crate::trivia::{TriviaItem, collect_trivia, format_line_comment, is_eol_comment};
 use m1_core::{Cst, Kind, Node};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 pub struct Printer {
     indent: usize,
     output: String,
     trivia: VecDeque<TriviaItem>,
     width: usize,
+    /// Memoized flat rendering of an expression subtree, keyed by its byte span.
+    /// The flat form of a node is invariant (single line, no indent/column/trivia
+    /// dependence), so caching it makes the wrap decision measure each subtree
+    /// once instead of re-rendering it at every enclosing level — turning the
+    /// otherwise O(2^N) nested-wrap cost into linear work (#64).
+    flat_cache: HashMap<(usize, usize), String>,
     /// Source end line of the most recently emitted statement, used to preserve
     /// author blank lines between statements.
     prev_end_line: Option<usize>,
@@ -29,6 +35,7 @@ impl Printer {
             output: String::new(),
             trivia,
             width: opts.line_width,
+            flat_cache: HashMap::new(),
             prev_end_line: None,
             eol_reserve: 0,
             indent_style: opts.indent_style,
@@ -133,6 +140,22 @@ impl Printer {
         rendered
     }
 
+    /// The cached flat (single-line) rendering of an expression subtree, computed
+    /// with `render` on a cache miss. Because a flat render is independent of the
+    /// current column, indent, and trivia, the result can be reused at every
+    /// enclosing level; this is what keeps nested wrapping from re-rendering the
+    /// same subtree once per ancestor (#64). Returns an owned `String` (cheap
+    /// relative to the avoided re-render) so the borrow on the cache is released.
+    fn flat_of(&mut self, node: Node, render: impl FnOnce(&mut Printer)) -> String {
+        let key = (node.byte_range().start, node.byte_range().end);
+        if let Some(cached) = self.flat_cache.get(&key) {
+            return cached.clone();
+        }
+        let rendered = self.trial(render);
+        self.flat_cache.insert(key, rendered.clone());
+        rendered
+    }
+
     /// Emit a single own-line trivia item at the current indentation,
     /// preserving any author blank lines that precede it.
     fn emit_own_line_trivia(&mut self, item: &TriviaItem) {
@@ -150,23 +173,32 @@ impl Printer {
         self.prev_end_line = Some(item.source_line + span);
     }
 
-    /// Emit a (possibly multi-line) block comment, re-indenting continuation
-    /// lines to the current depth. The first line is emitted assuming the
-    /// indent has already been written by the caller.
+    /// Emit a (possibly multi-line) block comment. The first line is emitted
+    /// assuming the indent has already been written by the caller.
+    ///
+    /// Continuation lines are emitted verbatim: a block comment's interior
+    /// whitespace is load-bearing (aligned tables, ASCII diagrams, indented
+    /// commented-out code) and must round-trip unchanged (#66). The only
+    /// reflowing applied is to conventional ` *`-prefixed javadoc lines, which are
+    /// re-aligned under the opening `/*` at the current indent; every other line
+    /// keeps its original leading whitespace. (Body rewrapping is deferred to v3.)
     fn emit_block_comment(&mut self, text: &str) {
         let mut first = true;
         for line in text.split('\n') {
             if !first {
                 self.emit_newline();
                 let trimmed = line.trim_start();
-                if !trimmed.is_empty() {
+                if trimmed.starts_with('*') {
+                    // Conventional javadoc continuation: re-align ` *` under the
+                    // opening `/*` at the current indent.
                     self.emit_indent();
-                    // Conventional block-comment continuation: align ` *` under
-                    // the opening `/*`.
-                    if trimmed.starts_with('*') {
-                        self.emit(" ");
-                    }
-                    self.emit(trimmed);
+                    self.emit(" ");
+                    self.emit(trimmed.trim_end());
+                } else if !line.trim().is_empty() {
+                    // Any other content (tables, diagrams, indented code): keep
+                    // the original interior whitespace verbatim. Only trailing
+                    // whitespace is trimmed, matching the first line.
+                    self.emit(line.trim_end());
                 }
             } else {
                 self.emit(line.trim_end());
@@ -407,6 +439,73 @@ impl Printer {
         }
     }
 
+    /// Emit the flat (single-line) form of an expression. This is the
+    /// measurement / flat-render path and it must never invoke the wrap decision
+    /// of a descendant, or the nested-wrap cost goes exponential (#64). Container
+    /// kinds whose normal emitter would re-decide wrapping (call, binary, ternary)
+    /// are rendered once through the memoizing cache; the remaining recursive
+    /// containers (member, unary, paren) recurse flatly; leaf kinds delegate to
+    /// the ordinary emitter (it never wraps).
+    fn emit_expr_flat(&mut self, node: Node) {
+        match node.kind() {
+            Kind::CallExpression => {
+                let flat = self.flat_of(node, |p| p.emit_call_flat(node));
+                self.emit(&flat);
+            }
+            Kind::BinaryExpression => {
+                let flat = self.flat_of(node, |p| p.emit_binary_flat(node));
+                self.emit(&flat);
+            }
+            Kind::TernaryExpression => {
+                let flat = self.flat_of(node, |p| p.emit_ternary_flat(node));
+                self.emit(&flat);
+            }
+            Kind::MemberExpression => {
+                for child in node.children() {
+                    match child.kind() {
+                        Kind::Dot => self.emit("."),
+                        Kind::LineComment | Kind::BlockComment => {}
+                        _ => self.emit_expr_flat(child),
+                    }
+                }
+            }
+            Kind::UnaryExpression => {
+                for child in node.children() {
+                    match child.kind() {
+                        Kind::Minus | Kind::Bang => self.emit(child.text()),
+                        Kind::Not => self.emit("not "),
+                        Kind::LineComment | Kind::BlockComment => {}
+                        _ => self.emit_expr_flat(child),
+                    }
+                }
+            }
+            Kind::ParenthesizedExpression => {
+                self.emit("(");
+                for child in node.children() {
+                    match child.kind() {
+                        Kind::LParen | Kind::RParen => {}
+                        Kind::LineComment | Kind::BlockComment => {}
+                        _ => self.emit_expr_flat(child),
+                    }
+                }
+                self.emit(")");
+            }
+            _ => self.emit_expr(node),
+        }
+    }
+
+    /// Flat form of a call (`function(args)`), measuring the argument list flatly
+    /// rather than via the wrap-deciding [`Printer::emit_arg_list`].
+    fn emit_call_flat(&mut self, node: Node) {
+        for child in node.children() {
+            match child.kind() {
+                Kind::ArgumentList => self.emit_arg_list_flat(child),
+                Kind::LineComment | Kind::BlockComment => {}
+                _ => self.emit_expr_flat(child),
+            }
+        }
+    }
+
     fn emit_member(&mut self, node: Node) {
         // object `.` property — no spaces around the dot.
         for child in node.children() {
@@ -431,7 +530,7 @@ impl Printer {
 
     fn emit_arg_list(&mut self, node: Node) {
         let start_col = self.current_col();
-        let flat = self.trial(|p| p.emit_arg_list_flat(node));
+        let flat = self.flat_of(node, |p| p.emit_arg_list_flat(node));
         if self.exceeds_limit(start_col, &flat) {
             self.emit_arg_list_wrapped(node);
         } else {
@@ -440,6 +539,8 @@ impl Printer {
     }
 
     /// `(` expr (`,` expr)* `)` on a single line — no padding, comma + space.
+    /// Nested expressions are emitted via their cached flat form so a flat render
+    /// never re-runs the wrap decision of a descendant (#64).
     fn emit_arg_list_flat(&mut self, node: Node) {
         self.emit("(");
         let mut first = true;
@@ -451,7 +552,7 @@ impl Printer {
                 _ => {
                     let _ = first;
                     first = false;
-                    self.emit_expr(child);
+                    self.emit_expr_flat(child);
                 }
             }
         }
@@ -478,7 +579,14 @@ impl Printer {
             .collect();
         let n = args.len();
         for (i, arg) in args.iter().enumerate() {
-            let piece = self.trial(|p| p.emit_expr(*arg));
+            // Measure placement from the argument's cached *flat* form, not a
+            // throwaway wrapped render: only the flat width drives the break
+            // decision, and emitting the argument is a single descent that
+            // re-runs its own wrap decision at the chosen column. Rendering a
+            // wrapped trial here just to measure made the wrapped path O(N^2)
+            // over a nested-call tower (#64).
+            let flat = self.flat_of(*arg, |p| p.emit_expr_flat(*arg));
+            let first_line = flat.split('\n').next().unwrap_or(&flat).chars().count();
             let last = i + 1 == n;
             // The last argument's line also carries `)`, the trailing `;`, and
             // any EOL comment; a non-last argument is followed by a `,`. Reserve
@@ -494,32 +602,27 @@ impl Printer {
                 // (`Outer(Inner(Innermost(`…), even the first argument's opening
                 // line can blow the budget with no break point — #14. If that
                 // line overflows *and* the continuation column is further left
-                // than where we are, break after `(` and re-render the argument
-                // at the smaller column so its own nested wrapping recurses.
-                let first_line = piece.split('\n').next().unwrap_or(&piece).chars().count();
+                // than where we are, break after `(` and emit the argument at the
+                // smaller column so its own nested wrapping recurses.
                 let cont_col = (self.indent + 2) * self.indent_width;
                 if self.current_col() + first_line + tail > self.width
                     && cont_col < self.current_col()
                 {
                     self.emit_newline();
                     self.emit_continuation_indent();
-                    let repiece = self.trial(|p| p.emit_expr(*arg));
-                    self.emit(&repiece);
-                } else {
-                    self.emit(&piece);
                 }
+                self.emit_expr(*arg);
             } else {
                 // We are after a prior arg; a "," was already emitted for it.
-                // Decide: continue on this line (" " + piece) or break.
-                let on_same = self.current_col() + 1 + piece.chars().count() + tail;
+                // Decide: continue on this line (" " + arg) or break.
+                let on_same = self.current_col() + 1 + first_line + tail;
                 if on_same > self.width {
                     self.emit_newline();
                     self.emit_continuation_indent();
-                    self.emit(&piece);
                 } else {
                     self.emit(" ");
-                    self.emit(&piece);
                 }
+                self.emit_expr(*arg);
             }
             if !last {
                 self.emit(",");
@@ -543,7 +646,7 @@ impl Printer {
 
     fn emit_binary(&mut self, node: Node) {
         let start_col = self.current_col();
-        let flat = self.trial(|p| p.emit_binary_flat(node));
+        let flat = self.flat_of(node, |p| p.emit_binary_flat(node));
         if self.exceeds_limit(start_col, &flat) {
             self.emit_binary_wrapped(node);
         } else {
@@ -563,7 +666,8 @@ impl Printer {
                 self.emit(child.text());
                 self.emit(" ");
             } else {
-                self.emit_expr(*child);
+                // Flat children via the cache, not the wrap decision (#64).
+                self.emit_expr_flat(*child);
             }
         }
     }
@@ -609,7 +713,12 @@ impl Printer {
         let n = ops.len();
         for (idx, (op, operand)) in ops.into_iter().enumerate() {
             let op_text = op.text().to_string();
-            let piece = self.trial(|p| p.emit_expr(operand));
+            // Measure placement from the operand's cached *flat* first line, not a
+            // throwaway wrapped render: the operand is emitted by a single descent
+            // that re-runs its own wrap decision at the chosen column, so the
+            // wrapped trial that made this path O(N^2) over a deep binary tower is
+            // no longer needed (#64).
+            let flat = self.flat_of(operand, |p| p.emit_expr_flat(operand));
             // The last operand's line also carries the trailing `;` and any EOL
             // comment; reserve for them on the final pair only.
             let tail = if idx + 1 == n {
@@ -617,31 +726,29 @@ impl Printer {
             } else {
                 0
             };
-            // Decide placement on the operand's first-line width. When breaking,
-            // re-render the operand at the continuation column so any nested
-            // wrapping uses the correct (smaller) column instead of this line's.
-            let first_line = piece.split('\n').next().unwrap_or(&piece).chars().count();
+            let first_line = flat.split('\n').next().unwrap_or(&flat).chars().count();
             let same_line =
                 self.current_col() + 1 + op_text.chars().count() + 1 + first_line + tail;
             if same_line > self.width {
+                // Break before the operator; emit the operand at the continuation
+                // column so any nested wrapping uses the correct (smaller) column.
                 self.emit_newline();
                 self.emit_continuation_indent();
                 self.emit(&op_text);
                 self.emit(" ");
-                let repiece = self.trial(|p| p.emit_expr(operand));
-                self.emit(&repiece);
+                self.emit_expr(operand);
             } else {
                 self.emit(" ");
                 self.emit(&op_text);
                 self.emit(" ");
-                self.emit(&piece);
+                self.emit_expr(operand);
             }
         }
     }
 
     fn emit_ternary(&mut self, node: Node) {
         let start_col = self.current_col();
-        let flat = self.trial(|p| p.emit_ternary_flat(node));
+        let flat = self.flat_of(node, |p| p.emit_ternary_flat(node));
         if self.exceeds_limit(start_col, &flat) {
             self.emit_ternary_wrapped(node);
         } else {
@@ -656,7 +763,8 @@ impl Printer {
                 Kind::Question => self.emit(" ? "),
                 Kind::Colon => self.emit(" : "),
                 Kind::LineComment | Kind::BlockComment => {}
-                _ => self.emit_expr(child),
+                // Flat children via the cache, not the wrap decision (#64).
+                _ => self.emit_expr_flat(child),
             }
         }
     }

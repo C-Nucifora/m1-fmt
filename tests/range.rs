@@ -55,3 +55,41 @@ fn syntax_error_buffer_is_left_alone() {
     let src = "local a = (1 +;\n";
     assert!(format_range(src, 0, 0, &opts()).unwrap().is_none());
 }
+
+/// #65: range formatting on a CRLF file must keep CRLF line endings. The range
+/// path used to split on `'\n'` and rejoin with `'\n'`, dropping each line's
+/// `'\r'`, so the formatted slice came back LF-only and was spliced into the
+/// otherwise-CRLF buffer — corrupting line endings even when content was
+/// unchanged. The formatted output must carry `\r\n`, not bare `\n`.
+#[test]
+fn crlf_range_preserves_crlf_line_endings() {
+    let src = "local x = 1;\r\nlocal y   =   2;\r\nlocal z = 3;\r\n";
+    // Reformat only line 2 (0-based index 1).
+    let r = format_range(src, 1, 1, &opts()).unwrap().unwrap();
+    assert!(
+        r.output.contains("\r\n"),
+        "CRLF must be preserved in range output, got {:?}",
+        r.output
+    );
+    assert!(
+        !r.output.contains('\n') || r.output.replace("\r\n", "").matches('\n').count() == 0,
+        "no bare LF should remain in range output, got {:?}",
+        r.output
+    );
+    assert_eq!(r.output, "local y = 2;\r\n");
+    assert!(r.changed);
+}
+
+/// #65: a CRLF region that is *already* canonically formatted must report no
+/// change (the old code's LF-vs-CRLF mismatch made `--check` see a spurious
+/// diff).
+#[test]
+fn crlf_range_already_formatted_reports_no_change() {
+    let src = "local a = 1;\r\nlocal b = 2;\r\n";
+    let r = format_range(src, 0, 0, &opts()).unwrap().unwrap();
+    assert!(
+        !r.changed,
+        "clean CRLF region should not be marked changed, got output {:?}",
+        r.output
+    );
+}
