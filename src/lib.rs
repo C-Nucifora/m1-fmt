@@ -78,8 +78,17 @@ pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, 
 
     let cst = m1_core::parse(&lf_src);
 
+    // A document nested deeper than the printer can safely recurse would
+    // stack-overflow `printer::print_with` (the printer recurses over expression
+    // nesting) — an uncatchable abort that crashes the CLI, CI, and the language
+    // server's format request. Decline to format it: pass the original source
+    // through unchanged, exactly as for a syntax-error buffer. Real M1 code nests
+    // only a handful of levels, so this triggers only on adversarial input (#72).
+    // `max_depth` is iterative, so the guard itself never overflows.
+    let too_deep = cst.root().max_depth() > m1_core::MAX_RECURSION_DEPTH;
+
     let diags = cst.syntax_diagnostics();
-    if !diags.is_empty() {
+    if too_deep || !diags.is_empty() {
         // Safety: pass through the ORIGINAL source unchanged, do not error.
         return Ok(FormatResult {
             output: src.to_string(),
@@ -153,6 +162,11 @@ pub fn format_range(
 ) -> Result<Option<RangeResult>, FormatError> {
     let cst = m1_core::parse(src);
     if !cst.syntax_diagnostics().is_empty() {
+        return Ok(None);
+    }
+    // Decline to range-format a pathologically deep document — the printer would
+    // overflow the stack (#72). The caller leaves the buffer untouched.
+    if cst.root().max_depth() > m1_core::MAX_RECURSION_DEPTH {
         return Ok(None);
     }
 
