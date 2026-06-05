@@ -122,6 +122,43 @@ fn print_diff(name: &str, original: &str, formatted: &str) {
     }
 }
 
+/// Write `bytes` to `path` atomically: write to a temp file in the same
+/// directory, flush + fsync it, then rename it over the target. A crash, kill, or
+/// I/O error can then only leave the original intact or fully replaced — never a
+/// half-written or truncated source (#68). On error the temp file is removed.
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    // Same-directory temp so the final rename stays on one filesystem (a rename
+    // across filesystems is not atomic and would fail). The pid + the file name
+    // keep concurrent `m1-fmt` runs from colliding on the same temp path.
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path.file_name().map(|s| s.to_owned()).unwrap_or_default();
+    let mut tmp_name = std::ffi::OsString::from(".");
+    tmp_name.push(&file_name);
+    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = dir.join(tmp_name);
+
+    // Scope the file handle so it is closed before the rename; clean up the temp
+    // on any failure so a partial write never lingers.
+    let write_result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.flush()?;
+        f.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
 fn main() {
     let mut args = Args::parse();
     let mut any_changed = false;
@@ -150,8 +187,16 @@ fn main() {
         // Read from stdin. Discover .m1fmt.toml from the working directory.
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let opts = resolve_opts(&args, &cwd);
-        let mut src = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut src).unwrap();
+        // Read stdin as bytes and decode through the same tolerant workspace
+        // decoder the file path uses (UTF-8 with a Windows-1252 fallback): a
+        // piped `.m1scr` may carry CP1252 bytes (e.g. `°` = 0xB0), and a strict
+        // `read_to_string` panicked on them (#67).
+        let mut bytes = Vec::new();
+        if let Err(e) = std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes) {
+            eprintln!("m1-fmt: {}: {}", args.stdin_filename, e);
+            process::exit(2);
+        }
+        let src = m1_workspace::decode(bytes);
         match format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
             m1_fmt::FormatResult {
                 output,
@@ -219,7 +264,7 @@ fn main() {
                             let orig = original.as_deref().unwrap_or("");
                             print_diff(&path.display().to_string(), orig, &result.output);
                         } else if args.in_place {
-                            std::fs::write(path, &result.output).unwrap_or_else(|e| {
+                            atomic_write(path, result.output.as_bytes()).unwrap_or_else(|e| {
                                 eprintln!("m1-fmt: {}: {}", path.display(), e);
                             });
                         } else {

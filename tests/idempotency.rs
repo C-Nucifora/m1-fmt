@@ -125,3 +125,41 @@ fn crlf_brace_adjacent_blank_is_stripped() {
         "brace-adjacent blank not stripped on CRLF input"
     );
 }
+
+/// #66: block-comment interior whitespace is load-bearing (aligned tables, ASCII
+/// diagrams, indented commented-out code) and must survive verbatim. The old
+/// `trim_start()` on every continuation line flattened the indentation of
+/// non-`*`-prefixed lines to column 0. The comment body must round-trip
+/// byte-for-byte.
+#[test]
+fn block_comment_interior_indentation_is_preserved() {
+    let src = "/* table:\n     col1    col2\n     a       b\n*/\nlocal x = 1;\n";
+    let out = m1_fmt::format_str(src).unwrap().output;
+    assert!(
+        out.contains("     col1    col2"),
+        "block-comment interior indentation must be preserved verbatim:\n{out}"
+    );
+    assert!(
+        out.contains("     a       b"),
+        "block-comment interior indentation must be preserved verbatim:\n{out}"
+    );
+    // And the whole thing is idempotent.
+    let twice = m1_fmt::format_str(&out).unwrap().output;
+    assert_eq!(out, twice, "block-comment formatting must be idempotent");
+}
+
+/// #66: a commented-out, tab-indented code block inside `/* */` (as found in the
+/// real corpus) must keep its indentation, not collapse to column 0.
+#[test]
+fn block_comment_indented_code_block_keeps_indentation() {
+    let src = "/*\n\tif (Foo)\n\t{\n\t\tBar = 1;\n\t}\n*/\nlocal y = 2;\n";
+    let out = m1_fmt::format_str(src).unwrap().output;
+    assert!(
+        out.contains("\n\tif (Foo)\n"),
+        "tab-indented commented-out code must keep its indentation:\n{out:?}"
+    );
+    assert!(
+        out.contains("\n\t\tBar = 1;\n"),
+        "nested tab indentation inside the comment must be preserved:\n{out:?}"
+    );
+}
