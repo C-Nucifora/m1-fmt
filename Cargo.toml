@@ -1,6 +1,6 @@
 [package]
 name = "m1-fmt"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
@@ -14,12 +14,13 @@ path = "src/lib.rs"
 
 [dependencies]
 m1-core = { git = "https://github.com/C-Nucifora/m1-core.git", tag = "v0.6.0" }
-m1-workspace = { git = "https://github.com/nedlane/m1-workspace.git", tag = "v0.3.0" }
+m1-workspace = { git = "https://github.com/nedlane/m1-workspace.git", tag = "v0.4.0" }
 clap = { version = "4", features = ["derive"] }
 toml = "1.1"
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"
 
 [profile.release]
 opt-level = 3

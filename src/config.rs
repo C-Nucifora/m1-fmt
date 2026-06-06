@@ -12,6 +12,26 @@
 
 use std::path::Path;
 
+/// Map a `brace_style` string to the enum. Accepts the documented spellings.
+/// Shared by [`parse`] and the unified `m1-tools.toml` mapping in the CLI.
+pub fn parse_brace_style(s: &str) -> Option<crate::BraceStyle> {
+    match s {
+        "allman" => Some(crate::BraceStyle::Allman),
+        "kr" | "k&r" | "knr" => Some(crate::BraceStyle::KAndR),
+        _ => None,
+    }
+}
+
+/// Map an `indent_style` string to the enum. Accepts the documented spellings.
+/// Shared by [`parse`] and the unified `m1-tools.toml` mapping in the CLI.
+pub fn parse_indent_style(s: &str) -> Option<crate::IndentStyle> {
+    match s {
+        "tab" | "tabs" => Some(crate::IndentStyle::Tab),
+        "space" | "spaces" => Some(crate::IndentStyle::Spaces),
+        _ => None,
+    }
+}
+
 /// Parsed config; absent keys are `None` so callers can layer precedence.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FileConfig {
@@ -43,15 +63,11 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
     };
     let brace_style = match value.get("brace_style").and_then(|v| v.as_str()) {
         None => None,
-        Some("allman") => Some(crate::BraceStyle::Allman),
-        Some("kr") | Some("k&r") | Some("knr") => Some(crate::BraceStyle::KAndR),
-        Some(other) => return Err(format!("invalid brace_style: {other}")),
+        Some(s) => Some(parse_brace_style(s).ok_or_else(|| format!("invalid brace_style: {s}"))?),
     };
     let indent_style = match value.get("indent_style").and_then(|v| v.as_str()) {
         None => None,
-        Some("tab") | Some("tabs") => Some(crate::IndentStyle::Tab),
-        Some("space") | Some("spaces") => Some(crate::IndentStyle::Spaces),
-        Some(other) => return Err(format!("invalid indent_style: {other}")),
+        Some(s) => Some(parse_indent_style(s).ok_or_else(|| format!("invalid indent_style: {s}"))?),
     };
     Ok(FileConfig {
         max_line_length: uint("max_line_length"),
