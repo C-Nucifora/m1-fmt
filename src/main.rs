@@ -87,18 +87,68 @@ fn format_buffer(
     }
 }
 
-/// Resolve [`FormatOptions`] for a file/stdin in `dir`, with precedence
-/// CLI flag > `.m1fmt.toml` (discovered upward from `dir`) > built-in default.
+/// Resolve [`FormatOptions`] for a file/stdin in `dir`, layering lowest-first:
+/// built-in defaults → the unified `m1-tools.toml` `[format]` section → the
+/// tool-specific `.m1fmt.toml` (overrides the unified file) → CLI flags. Both
+/// config files are discovered by walking up from `dir`.
 fn resolve_opts(args: &Args, dir: &std::path::Path) -> m1_fmt::FormatOptions {
-    let cfg = m1_fmt::config::discover(dir).unwrap_or_default();
-    let d = m1_fmt::FormatOptions::default();
-    m1_fmt::FormatOptions {
-        max_blank_lines: args.max_blank_lines.or(cfg.max_blank_lines).unwrap_or(2),
-        line_width: args.line_width.or(cfg.max_line_length).unwrap_or(88),
-        brace_style: cfg.brace_style.unwrap_or(d.brace_style),
-        indent_style: cfg.indent_style.unwrap_or(d.indent_style),
-        indent_width: cfg.indent_width.unwrap_or(d.indent_width),
+    let mut o = m1_fmt::FormatOptions::default();
+
+    // Layer 1: the unified m1-tools.toml [format] section (lowest config layer).
+    if let Some(tc) = m1_workspace::config::M1ToolsConfig::discover(dir) {
+        let f = tc.format;
+        if let Some(n) = f.line_width {
+            o.line_width = n;
+        }
+        if let Some(n) = f.max_blank_lines {
+            o.max_blank_lines = n;
+        }
+        if let Some(n) = f.indent_width {
+            o.indent_width = n;
+        }
+        if let Some(s) = f
+            .indent_style
+            .as_deref()
+            .and_then(m1_fmt::config::parse_indent_style)
+        {
+            o.indent_style = s;
+        }
+        if let Some(s) = f
+            .brace_style
+            .as_deref()
+            .and_then(m1_fmt::config::parse_brace_style)
+        {
+            o.brace_style = s;
+        }
     }
+
+    // Layer 2: the tool-specific .m1fmt.toml overrides the unified file.
+    if let Some(cfg) = m1_fmt::config::discover(dir) {
+        if let Some(n) = cfg.max_line_length {
+            o.line_width = n;
+        }
+        if let Some(n) = cfg.max_blank_lines {
+            o.max_blank_lines = n;
+        }
+        if let Some(n) = cfg.indent_width {
+            o.indent_width = n;
+        }
+        if let Some(s) = cfg.indent_style {
+            o.indent_style = s;
+        }
+        if let Some(s) = cfg.brace_style {
+            o.brace_style = s;
+        }
+    }
+
+    // Layer 3: explicit CLI flags win over everything.
+    if let Some(n) = args.max_blank_lines {
+        o.max_blank_lines = n;
+    }
+    if let Some(n) = args.line_width {
+        o.line_width = n;
+    }
+    o
 }
 
 /// Print a minimal unified diff between `original` and `formatted`.
@@ -293,5 +343,61 @@ fn main() {
         process::exit(2);
     } else if any_changed && args.check {
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+    use clap::Parser;
+
+    fn args(extra: &[&str]) -> Args {
+        let mut v = vec!["m1-fmt"];
+        v.extend_from_slice(extra);
+        Args::parse_from(v)
+    }
+
+    #[test]
+    fn unified_tools_toml_drives_brace_style() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nbrace_style = \"kr\"\nindent_style = \"spaces\"\nindent_width = 2\nline_width = 100\n",
+        )
+        .unwrap();
+        let o = resolve_opts(&args(&[]), tmp.path());
+        assert_eq!(o.brace_style, m1_fmt::BraceStyle::KAndR);
+        assert_eq!(o.indent_style, m1_fmt::IndentStyle::Spaces);
+        assert_eq!(o.indent_width, 2);
+        assert_eq!(o.line_width, 100);
+    }
+
+    #[test]
+    fn m1fmt_toml_overrides_unified_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nbrace_style = \"kr\"\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join(".m1fmt.toml"), "brace_style = \"allman\"\n").unwrap();
+        let o = resolve_opts(&args(&[]), tmp.path());
+        assert_eq!(
+            o.brace_style,
+            m1_fmt::BraceStyle::Allman,
+            ".m1fmt.toml wins"
+        );
+    }
+
+    #[test]
+    fn flag_overrides_both() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nline_width = 100\n",
+        )
+        .unwrap();
+        let o = resolve_opts(&args(&["--line-width", "70"]), tmp.path());
+        assert_eq!(o.line_width, 70);
     }
 }
