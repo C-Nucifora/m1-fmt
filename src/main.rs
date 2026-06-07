@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process;
 
 #[derive(Parser, Debug)]
-#[command(name = "m1-fmt", about = "Autoformatter for MoTeC M1 scripts")]
+#[command(name = "m1-fmt", version, about = "Autoformatter for MoTeC M1 scripts")]
 struct Args {
     /// Files to format (a lone `-`, or no files, reads from stdin)
     files: Vec<PathBuf>,
