@@ -39,6 +39,17 @@ fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> (String, String, Option<
 }
 
 #[test]
+fn version_flag_prints_version() {
+    // #80: m1-fmt should report its version like the other CLIs.
+    let (stdout, _stderr, code) = run_with_stdin(&["--version"], "");
+    assert_eq!(code, Some(0));
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "stdout should contain the version: {stdout}"
+    );
+}
+
+#[test]
 fn check_flags_unparseable_input() {
     // #77: m1-fmt leaves a syntax-error buffer byte-for-byte unchanged (safe),
     // but `--check` must not then report it clean with exit 0 — that hides broken
