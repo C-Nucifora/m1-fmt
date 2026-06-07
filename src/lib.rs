@@ -41,6 +41,11 @@ pub struct FormatOptions {
     pub indent_width: usize,
     /// Opening-brace placement (default Allman, per the manual).
     pub brace_style: BraceStyle,
+    /// Extra indent levels added to wrapped/continuation lines (binary chains,
+    /// argument lists, ternaries), on top of the current block indent. The M1
+    /// Development Manual specifies a single extra level, so the default is `1`;
+    /// teams preferring the older `+2` can override it.
+    pub continuation_indent: usize,
 }
 
 impl Default for FormatOptions {
@@ -51,6 +56,7 @@ impl Default for FormatOptions {
             indent_style: IndentStyle::default(),
             indent_width: 4,
             brace_style: BraceStyle::default(),
+            continuation_indent: 1,
         }
     }
 }

@@ -54,6 +54,49 @@ fn long_ternary_wraps_under_the_line_width() {
     );
 }
 
+#[test]
+fn continuation_indent_defaults_to_one_level_per_manual() {
+    // #78: the M1 Development Manual specifies a single extra indent for
+    // continuation lines (block level + 1). With default tab indentation, a
+    // wrapped binary expression at block level 0 indents its continuation with
+    // exactly one tab — not two.
+    let src = "local myResult = DemoGroup.ValueA + DemoGroup.ValueB + DemoGroup.ValueC + DemoGroup.ValueD;\n";
+    let out = fmt(src);
+    let cont = out
+        .lines()
+        .find(|l| l.trim_start().starts_with("+ "))
+        .expect("expected a wrapped continuation line");
+    let tabs = cont.chars().take_while(|&c| c == '\t').count();
+    assert_eq!(
+        tabs, 1,
+        "continuation should be one tab, got {tabs}:\n{out}"
+    );
+}
+
+#[test]
+fn continuation_indent_is_configurable() {
+    // A team may opt back into the +2 convention via config.
+    let src = "local myResult = DemoGroup.ValueA + DemoGroup.ValueB + DemoGroup.ValueC + DemoGroup.ValueD;\n";
+    let out = format_str_with(
+        src,
+        &FormatOptions {
+            continuation_indent: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .output;
+    let cont = out
+        .lines()
+        .find(|l| l.trim_start().starts_with("+ "))
+        .expect("expected a wrapped continuation line");
+    let tabs = cont.chars().take_while(|&c| c == '\t').count();
+    assert_eq!(
+        tabs, 2,
+        "continuation should honor the configured +2:\n{out}"
+    );
+}
+
 // #64: the wrap decision must measure each sub-expression once, not re-render
 // the whole nested subtree at every ancestor. Without memoization the cost is
 // O(2^N) and a ~200-byte deeply-nested script hangs the formatter for minutes;

@@ -45,6 +45,8 @@ pub struct FileConfig {
     pub indent_style: Option<crate::IndentStyle>,
     /// Maps to `FormatOptions::indent_width`.
     pub indent_width: Option<usize>,
+    /// Maps to `FormatOptions::continuation_indent`.
+    pub continuation_indent: Option<usize>,
 }
 
 /// Parse a `.m1fmt.toml` body. Unknown keys are ignored; missing keys stay
@@ -75,6 +77,7 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
         brace_style,
         indent_style,
         indent_width: uint("indent_width"),
+        continuation_indent: uint("continuation_indent"),
     })
 }
 

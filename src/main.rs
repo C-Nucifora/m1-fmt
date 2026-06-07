@@ -139,6 +139,9 @@ fn resolve_opts(args: &Args, dir: &std::path::Path) -> m1_fmt::FormatOptions {
         if let Some(s) = cfg.brace_style {
             o.brace_style = s;
         }
+        if let Some(n) = cfg.continuation_indent {
+            o.continuation_indent = n;
+        }
     }
 
     // Layer 3: explicit CLI flags win over everything.
