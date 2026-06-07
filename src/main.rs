@@ -489,6 +489,8 @@ fn main() {
                         path.display(),
                         diags.len()
                     );
+                    // A skipped, unparseable file is not a clean success either.
+                    any_syntax_error = true;
                 }
                 Err(e) => {
                     eprintln!("m1-fmt: {}: {}", path.display(), e);
@@ -500,9 +502,14 @@ fn main() {
 
     if any_error {
         process::exit(2);
-    } else if args.check && (any_changed || any_syntax_error) {
-        // --check: exit non-zero if any file would reformat OR couldn't be parsed
-        // (the latter is left unchanged but is not "clean" — don't hide it in CI).
+    } else if any_syntax_error {
+        // A file with syntax errors is left byte-for-byte unchanged (the original
+        // is still emitted, data-preserving), but it is NOT a clean success in any
+        // mode: fail loudly so a broken script can't slip through a pipeline,
+        // format-on-save, or CI — not just under `--check`.
+        process::exit(1);
+    } else if args.check && any_changed {
+        // --check: exit non-zero if any file would reformat.
         process::exit(1);
     }
 }

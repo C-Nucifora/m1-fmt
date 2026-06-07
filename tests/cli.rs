@@ -50,6 +50,25 @@ fn version_flag_prints_version() {
 }
 
 #[test]
+fn default_mode_fails_on_syntax_errors() {
+    // Syntax errors are a failed output in *every* mode, not just --check: a
+    // broken script left byte-for-byte unchanged is not a success. The original
+    // content is still emitted (data-preserving), but the exit code signals the
+    // failure so it can't slip through a pipeline or a format-on-save.
+    let (stdout, stderr, code) = run_with_stdin(&["-"], "x = 1\n");
+    assert_ne!(
+        code,
+        Some(0),
+        "default-mode format of unparseable input must exit non-zero; stderr: {stderr}"
+    );
+    assert_eq!(stdout, "x = 1\n", "the original is still emitted unchanged");
+    assert!(
+        stderr.to_lowercase().contains("syntax"),
+        "stderr should mention syntax errors: {stderr}"
+    );
+}
+
+#[test]
 fn check_flags_unparseable_input() {
     // #77: m1-fmt leaves a syntax-error buffer byte-for-byte unchanged (safe),
     // but `--check` must not then report it clean with exit 0 — that hides broken
@@ -116,7 +135,9 @@ fn windows1252_byte_is_decoded_not_rejected() {
     let dir = std::env::temp_dir();
     let path = dir.join("m1fmt_w1252_test.m1scr");
     // `\xb0` is the Windows-1252 (and Latin-1) encoding of `°` in a comment.
-    std::fs::write(&path, b"// yaw \xb0/s\n[\n]\n").unwrap();
+    // The body is valid M1 so the test isolates the decode behaviour (a syntax
+    // error would now correctly fail the format in every mode).
+    std::fs::write(&path, b"// yaw \xb0/s\nx = 1;\n").unwrap();
     let arg = path.to_str().unwrap();
 
     // --check must not emit the UTF-8 decode error.
