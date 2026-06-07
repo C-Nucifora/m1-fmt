@@ -61,6 +61,20 @@ pub struct FormatResult {
     pub warnings: Vec<FormatWarning>,
 }
 
+/// The number of syntax errors in `src`. m1-fmt deliberately leaves a buffer
+/// with syntax errors byte-for-byte unchanged (data-preserving — see
+/// [`format_str_with`]), so callers can't tell "already formatted" apart from
+/// "couldn't be parsed" from the [`FormatResult`] alone. The CLI uses this to
+/// flag unparseable input under `--check` instead of reporting it clean (#77).
+pub fn syntax_error_count(src: &str) -> usize {
+    let lf: Cow<str> = if src.contains("\r\n") {
+        Cow::Owned(src.replace("\r\n", "\n"))
+    } else {
+        Cow::Borrowed(src)
+    };
+    m1_core::parse(&lf).syntax_diagnostics().len()
+}
+
 pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
     format_str_with(src, &FormatOptions::default())
 }

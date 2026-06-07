@@ -81,6 +81,10 @@ LSP calls the underlying `format_range` to build `textDocument/rangeFormatting`
 edits). Expression fragments aren't independently parseable, so a range that
 overlaps no complete statement is a no-op.
 
+A buffer with syntax errors is left byte-for-byte unchanged (formatting never
+corrupts unparseable input). In `--check` mode this is reported on stderr and
+exits non-zero, so CI doesn't mistake an unparseable file for a clean one.
+
 ## Build & test
 
 ```sh
