@@ -213,6 +213,9 @@ fn main() {
     let mut args = Args::parse();
     let mut any_changed = false;
     let mut any_error = false;
+    // A buffer with syntax errors is passed through unchanged (data-preserving);
+    // track it so `--check` doesn't report unparseable input as clean (#77).
+    let mut any_syntax_error = false;
 
     // A lone `-` is the conventional spelling for "read standard input"; treat it
     // the same as passing no file arguments at all (matches rustfmt/black/gofmt).
@@ -258,6 +261,14 @@ fn main() {
                 for w in &result.warnings {
                     eprintln!("{}:{}: warning: {}", args.stdin_filename, w.line, w.message);
                 }
+                let serr = m1_fmt::syntax_error_count(&src);
+                if serr > 0 {
+                    eprintln!(
+                        "m1-fmt: {}: {serr} syntax error(s); left unchanged",
+                        args.stdin_filename
+                    );
+                    any_syntax_error = true;
+                }
                 if args.diff {
                     if result.changed {
                         print_diff(&args.stdin_filename, &src, &result.output);
@@ -302,6 +313,16 @@ fn main() {
                     for w in &result.warnings {
                         eprintln!("{}:{}: warning: {}", path.display(), w.line, w.message);
                     }
+                    if let Some(src) = &original {
+                        let serr = m1_fmt::syntax_error_count(src);
+                        if serr > 0 {
+                            eprintln!(
+                                "m1-fmt: {}: {serr} syntax error(s); left unchanged",
+                                path.display()
+                            );
+                            any_syntax_error = true;
+                        }
+                    }
                     // The bare-stdout case must print unconditionally (mirroring
                     // the stdin branch); gating it on `changed` truncated an
                     // already-formatted file to empty (#59). `-i`/`--diff`/
@@ -341,7 +362,9 @@ fn main() {
 
     if any_error {
         process::exit(2);
-    } else if any_changed && args.check {
+    } else if args.check && (any_changed || any_syntax_error) {
+        // --check: exit non-zero if any file would reformat OR couldn't be parsed
+        // (the latter is left unchanged but is not "clean" — don't hide it in CI).
         process::exit(1);
     }
 }

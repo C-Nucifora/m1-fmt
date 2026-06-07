@@ -39,6 +39,23 @@ fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> (String, String, Option<
 }
 
 #[test]
+fn check_flags_unparseable_input() {
+    // #77: m1-fmt leaves a syntax-error buffer byte-for-byte unchanged (safe),
+    // but `--check` must not then report it clean with exit 0 — that hides broken
+    // files in CI. It should print a note and exit non-zero.
+    let (_out, stderr, code) = run_with_stdin(&["--check", "-"], "local <Integer> = 1;\n");
+    assert_ne!(
+        code,
+        Some(0),
+        "--check on unparseable input must exit non-zero; stderr: {stderr}"
+    );
+    assert!(
+        stderr.to_lowercase().contains("syntax"),
+        "stderr should mention syntax errors: {stderr}"
+    );
+}
+
+#[test]
 fn dash_argument_reads_stdin() {
     // `-` is the conventional spelling for "read standard input".
     let (stdout, stderr, code) = run_with_stdin(&["-"], "local x=1;\n");
