@@ -255,15 +255,11 @@ impl Printer {
     }
 
     /// Flush all remaining trivia whose offset is before `before_byte` as
-    /// own-line comments (used before a closing brace or end of file).
+    /// own-line comments (used before a closing brace or end of file). Same loop
+    /// as [`Printer::inject_trivia_before`]; kept as a distinct, intent-revealing
+    /// name at the call sites.
     fn flush_trivia_before(&mut self, before_byte: usize) {
-        while let Some(item) = self.trivia.front() {
-            if item.byte_offset >= before_byte {
-                break;
-            }
-            let item = self.trivia.pop_front().unwrap();
-            self.emit_own_line_trivia(&item);
-        }
+        self.inject_trivia_before(before_byte);
     }
 
     fn flush_remaining_trivia(&mut self) {
@@ -288,14 +284,15 @@ impl Printer {
 
     fn print_source_file(&mut self, root: Node) {
         for child in root.children() {
-            self.print_top_statement(child);
+            self.print_statement_line(child);
         }
         self.flush_remaining_trivia();
     }
 
     /// A statement at file scope or inside a block: handles own-line trivia
-    /// injection, indentation, the statement, and a trailing EOL comment.
-    fn print_top_statement(&mut self, node: Node) {
+    /// injection, indentation, the statement, and a trailing EOL comment. The
+    /// handling is identical at file scope and inside a block.
+    fn print_statement_line(&mut self, node: Node) {
         // Comments are extras: they may show up as direct children. Skip them;
         // they are handled via the trivia list.
         if matches!(node.kind(), Kind::LineComment | Kind::BlockComment) {
@@ -344,7 +341,6 @@ impl Printer {
     fn print_local_decl(&mut self, node: Node) {
         // Children in order: optional `static`, `local`, optional
         // type_annotation, name, optional (`=` value), `;`.
-        let mut emitted_any = false;
         for child in node.children() {
             match child.kind() {
                 Kind::Static => {
@@ -352,7 +348,6 @@ impl Printer {
                 }
                 Kind::Local => {
                     self.emit("local");
-                    emitted_any = true;
                 }
                 Kind::TypeAnnotation => {
                     self.emit(" ");
@@ -375,7 +370,6 @@ impl Printer {
                 }
             }
         }
-        let _ = emitted_any;
     }
 
     fn print_type_annotation(&mut self, node: Node) {
@@ -393,17 +387,16 @@ impl Printer {
         // target operator value ;
         for child in node.children() {
             match child.kind() {
-                Kind::Assign
-                | Kind::PlusEq
-                | Kind::MinusEq
-                | Kind::StarEq
-                | Kind::SlashEq
-                | Kind::PercentEq
-                | Kind::AmpEq
-                | Kind::PipeEq
-                | Kind::CaretEq
-                | Kind::LtLtEq
-                | Kind::GtGtEq => {
+                // Plain `=` plus the compound assignments (`+=`, `<<=`, …). The
+                // compound set comes from the shared m1-core predicate so it stays
+                // in lock-step with the grammar; `Kind::Assign` is not a compound
+                // assignment, so it is matched explicitly.
+                Kind::Assign => {
+                    self.emit(" ");
+                    self.emit(child.text());
+                    self.emit(" ");
+                }
+                k if m1_core::is_compound_assign(k) => {
                     self.emit(" ");
                     self.emit(child.text());
                     self.emit(" ");
@@ -548,17 +541,12 @@ impl Printer {
     /// never re-runs the wrap decision of a descendant (#64).
     fn emit_arg_list_flat(&mut self, node: Node) {
         self.emit("(");
-        let mut first = true;
         for child in node.children() {
             match child.kind() {
                 Kind::LParen | Kind::RParen => {}
                 Kind::Comma => self.emit(", "),
                 Kind::LineComment | Kind::BlockComment => {}
-                _ => {
-                    let _ = first;
-                    first = false;
-                    self.emit_expr_flat(child);
-                }
+                _ => self.emit_expr_flat(child),
             }
         }
         self.emit(")");
@@ -849,7 +837,9 @@ impl Printer {
         // its own line the brace must start a fresh line too (even under K&R,
         // which would otherwise glue `{` onto the comment).
         if attached
-            && let Some(lbrace) = self.find_lbrace(node)
+            && let Some(lbrace) = self
+                .find_child_of_kind(node, Kind::LBrace)
+                .map(|c| c.byte_range().start)
             && self.trivia.front().is_some_and(|t| t.byte_offset < lbrace)
         {
             // Drop off the opener's line first: the condition was emitted with no
@@ -874,11 +864,13 @@ impl Printer {
         self.indent += 1;
         // Measure blank gaps inside the block from the opening-brace line.
         self.prev_end_line = Some(node.range().start.line as usize);
-        let rbrace = self.find_rbrace(node);
+        let rbrace = self
+            .find_child_of_kind(node, Kind::RBrace)
+            .map(|c| c.byte_range().start);
         for child in node.children() {
             match child.kind() {
                 Kind::LBrace | Kind::RBrace => {}
-                _ => self.print_block_statement(child),
+                _ => self.print_statement_line(child),
             }
         }
         // Flush any trailing comments before the closing brace.
@@ -895,52 +887,18 @@ impl Printer {
         // `}` and any following token shift together, so the brace-relative gap
         // is invariant — fixing the non-idempotent blank before a comment that
         // precedes an `is`-clause (#60).
-        if let Some(line) = self.find_rbrace_line(node) {
+        if let Some(line) = self
+            .find_child_of_kind(node, Kind::RBrace)
+            .map(|c| c.range().start.line as usize)
+        {
             self.prev_end_line = Some(line);
         }
     }
 
-    fn find_lbrace(&self, node: Node) -> Option<usize> {
-        node.children()
-            .into_iter()
-            .find(|c| c.kind() == Kind::LBrace)
-            .map(|c| c.byte_range().start)
-    }
-
-    fn find_rbrace(&self, node: Node) -> Option<usize> {
-        node.children()
-            .into_iter()
-            .find(|c| c.kind() == Kind::RBrace)
-            .map(|c| c.byte_range().start)
-    }
-
-    fn find_rbrace_line(&self, node: Node) -> Option<usize> {
-        node.children()
-            .into_iter()
-            .find(|c| c.kind() == Kind::RBrace)
-            .map(|c| c.range().start.line as usize)
-    }
-
-    fn print_block_statement(&mut self, node: Node) {
-        if matches!(node.kind(), Kind::LineComment | Kind::BlockComment) {
-            return;
-        }
-        let start = node.byte_range().start;
-        let start_line = node.range().start.line as usize;
-        let end_line = node.range().end.line as usize;
-        self.inject_trivia_before(start);
-        self.emit_blank_gap(start_line);
-        self.emit_indent();
-        // Reserve the trailing `;` (statements that carry one) plus any EOL
-        // comment, so a line that is over-budget only because of them wraps.
-        let semi = usize::from(ends_with_semicolon(node.kind()));
-        self.eol_reserve = self.pending_eol_width(end_line) + semi;
-        self.print_statement(node);
-        self.eol_reserve = 0;
-        let eol = self.take_eol_comment(end_line);
-        self.emit_eol(eol);
-        self.emit_newline();
-        self.prev_end_line = Some(end_line);
+    /// The first direct child of `node` with the given `kind`, if any. Callers
+    /// project the result to the byte offset or line they need.
+    fn find_child_of_kind<'a>(&self, node: Node<'a>, kind: Kind) -> Option<Node<'a>> {
+        node.children().into_iter().find(|c| c.kind() == kind)
     }
 
     fn print_bare_block(&mut self, node: Node) {
@@ -1007,7 +965,9 @@ impl Printer {
         self.emit("when (");
         let mut seen_lparen = false;
         let mut in_body = false;
-        let rbrace = self.find_rbrace(node);
+        let rbrace = self
+            .find_child_of_kind(node, Kind::RBrace)
+            .map(|c| c.byte_range().start);
         for child in node.children() {
             match child.kind() {
                 Kind::When => {}
