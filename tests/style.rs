@@ -16,7 +16,7 @@ fn default_is_allman_braces_and_tab_indentation() {
 #[test]
 fn kr_and_spaces_override() {
     let opts = FormatOptions {
-        brace_style: BraceStyle::KAndR,
+        brace_style: BraceStyle::Kr,
         indent_style: IndentStyle::Spaces,
         indent_width: 4,
         ..Default::default()

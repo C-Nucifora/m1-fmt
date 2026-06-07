@@ -14,22 +14,16 @@ use std::path::Path;
 
 /// Map a `brace_style` string to the enum. Accepts the documented spellings.
 /// Shared by [`parse`] and the unified `m1-tools.toml` mapping in the CLI.
+/// Delegates to the canonical parser in m1-workspace.
 pub fn parse_brace_style(s: &str) -> Option<crate::BraceStyle> {
-    match s {
-        "allman" => Some(crate::BraceStyle::Allman),
-        "kr" | "k&r" | "knr" => Some(crate::BraceStyle::KAndR),
-        _ => None,
-    }
+    crate::BraceStyle::parse(s)
 }
 
 /// Map an `indent_style` string to the enum. Accepts the documented spellings.
 /// Shared by [`parse`] and the unified `m1-tools.toml` mapping in the CLI.
+/// Delegates to the canonical parser in m1-workspace.
 pub fn parse_indent_style(s: &str) -> Option<crate::IndentStyle> {
-    match s {
-        "tab" | "tabs" => Some(crate::IndentStyle::Tab),
-        "space" | "spaces" => Some(crate::IndentStyle::Spaces),
-        _ => None,
-    }
+    crate::IndentStyle::parse(s)
 }
 
 /// Parsed config; absent keys are `None` so callers can layer precedence.
