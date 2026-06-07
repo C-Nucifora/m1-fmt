@@ -843,7 +843,33 @@ impl Printer {
     /// when `attached`), the indented body, and the closing `}` at the current
     /// indent (without a trailing newline).
     fn print_block(&mut self, node: Node, attached: bool) {
-        self.emit_block_open(attached);
+        // A comment between an inline opener (`if (cond)`, `is (X)`, …) and its
+        // `{` belongs on its own line *before* the brace — not relocated inside
+        // the block (#76). Flush any such trivia first; once a comment has gone on
+        // its own line the brace must start a fresh line too (even under K&R,
+        // which would otherwise glue `{` onto the comment).
+        if attached
+            && let Some(lbrace) = self.find_lbrace(node)
+            && self.trivia.front().is_some_and(|t| t.byte_offset < lbrace)
+        {
+            // Drop off the opener's line first: the condition was emitted with no
+            // trailing newline, and `emit_blank_gap` only fills *extra* blank
+            // lines, not the base line break before the comment.
+            self.emit_newline();
+            // Anchor the blank-gap baseline to the first comment's own line so no
+            // blank line is inserted between the opener and the comment. Without
+            // this the gap is measured from a stale `prev_end_line` and, once the
+            // opener/comment shift onto their own lines, a spurious blank appears
+            // on the next format pass (non-idempotent on the real corpus).
+            if let Some(first) = self.trivia.front() {
+                self.prev_end_line = Some(first.source_line);
+            }
+            self.flush_trivia_before(lbrace);
+            self.emit_indent();
+            self.emit("{");
+        } else {
+            self.emit_block_open(attached);
+        }
         self.emit_newline();
         self.indent += 1;
         // Measure blank gaps inside the block from the opening-brace line.
@@ -872,6 +898,13 @@ impl Printer {
         if let Some(line) = self.find_rbrace_line(node) {
             self.prev_end_line = Some(line);
         }
+    }
+
+    fn find_lbrace(&self, node: Node) -> Option<usize> {
+        node.children()
+            .into_iter()
+            .find(|c| c.kind() == Kind::LBrace)
+            .map(|c| c.byte_range().start)
     }
 
     fn find_rbrace(&self, node: Node) -> Option<usize> {
