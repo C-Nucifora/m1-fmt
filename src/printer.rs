@@ -25,6 +25,9 @@ pub struct Printer {
     indent_style: crate::IndentStyle,
     indent_width: usize,
     brace_style: crate::BraceStyle,
+    /// Extra indent levels for wrapped/continuation lines (default 1, per the
+    /// manual; configurable). See [`crate::FormatOptions::continuation_indent`].
+    continuation_indent: usize,
 }
 
 impl Printer {
@@ -41,6 +44,7 @@ impl Printer {
             indent_style: opts.indent_style,
             indent_width: opts.indent_width,
             brace_style: opts.brace_style,
+            continuation_indent: opts.continuation_indent,
         }
     }
 
@@ -116,10 +120,11 @@ impl Printer {
         false
     }
 
-    /// Emit a continuation indent: the current block indent plus two extra
-    /// indent levels (+8 columns at the default width), per the v2 spec §3.3.
+    /// Emit a continuation indent: the current block indent plus
+    /// `continuation_indent` extra levels (default 1, per the M1 Development
+    /// Manual; configurable — see [`crate::FormatOptions::continuation_indent`]).
     fn emit_continuation_indent(&mut self) {
-        let n = self.indent + 2;
+        let n = self.indent + self.continuation_indent;
         self.push_levels(n);
     }
 
@@ -604,7 +609,7 @@ impl Printer {
                 // line overflows *and* the continuation column is further left
                 // than where we are, break after `(` and emit the argument at the
                 // smaller column so its own nested wrapping recurses.
-                let cont_col = (self.indent + 2) * self.indent_width;
+                let cont_col = (self.indent + self.continuation_indent) * self.indent_width;
                 if self.current_col() + first_line + tail > self.width
                     && cont_col < self.current_col()
                 {
@@ -1236,13 +1241,15 @@ mod wrap_tests {
     }
 
     #[test]
-    fn continuation_indent_is_block_plus_eight() {
+    fn continuation_indent_is_block_plus_one_level() {
+        // #78: the manual specifies one extra indent level for continuations, so
+        // at block level 1 (4 spaces) the continuation is block + one level.
         let mut p = printer();
         p.indent_style = crate::IndentStyle::Spaces;
         p.indent_width = 4;
         p.indent = 1; // 4 spaces of block indent
         p.emit_continuation_indent();
-        assert_eq!(p.output, " ".repeat(4 + 8));
+        assert_eq!(p.output, " ".repeat(4 + 4));
     }
 
     #[test]
@@ -1250,7 +1257,23 @@ mod wrap_tests {
         let mut p = printer();
         p.indent = 1;
         p.emit_continuation_indent();
-        assert_eq!(p.output, "\t".repeat(1 + 2)); // block + 2 levels, as tabs
+        assert_eq!(p.output, "\t".repeat(1 + 1)); // block + one level, as tabs (#78)
+    }
+
+    #[test]
+    fn continuation_indent_honors_configured_levels() {
+        // The +2 convention remains available via config.
+        let cst = m1_core::parse("x = 1;\n");
+        let mut p = Printer::new(
+            &cst,
+            &crate::FormatOptions {
+                continuation_indent: 2,
+                ..Default::default()
+            },
+        );
+        p.indent = 1;
+        p.emit_continuation_indent();
+        assert_eq!(p.output, "\t".repeat(1 + 2));
     }
 
     // #14: nested call-opens that stack a long prefix on the opening line must
