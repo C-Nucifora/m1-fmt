@@ -1,13 +1,13 @@
 //! The M1 source printer, split across focused submodules.
 //!
 //! [`Printer`] holds all formatting state; its inherent `impl` is spread over:
-//! - [`infra`]: emit / trivia / measurement helpers,
-//! - [`statements`]: statement dispatch + simple statements,
-//! - [`expressions`]: the flat-vs-wrap expression emitters,
-//! - [`control`]: blocks and control-flow constructs,
-//! - [`normalize`]: whole-output post-processing (free functions).
+//! - `infra`: emit / trivia / measurement helpers,
+//! - `statements`: statement dispatch + simple statements,
+//! - `expressions`: the flat-vs-wrap expression emitters,
+//! - `control`: blocks and control-flow constructs,
+//! - `normalize`: whole-output post-processing (free functions).
 //!
-//! The crate entry points are [`print`] and [`print_with`].
+//! The crate entry points are `print` and `print_with`.
 
 use crate::trivia::{TriviaItem, collect_trivia};
 use m1_core::{Cst, Kind, Node};
