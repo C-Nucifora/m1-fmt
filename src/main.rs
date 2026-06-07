@@ -501,7 +501,12 @@ fn main() {
     }
 
     if any_error {
-        process::exit(2);
+        // A per-file I/O error (unreadable/missing file). The batch already
+        // continued past it; exit 1 — the same "has something to report" code
+        // m1-lint/m1-typecheck use. Exit 2 is reserved for usage errors (a bad
+        // flag/argument), handled inline above. Keeps the three CLIs consistent
+        // (#16).
+        process::exit(1);
     } else if any_syntax_error {
         // A file with syntax errors is left byte-for-byte unchanged (the original
         // is still emitted, data-preserving), but it is NOT a clean success in any

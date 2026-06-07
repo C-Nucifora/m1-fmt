@@ -69,6 +69,27 @@ fn default_mode_fails_on_syntax_errors() {
 }
 
 #[test]
+fn missing_file_exits_one_not_two() {
+    // CLI-convention consistency (#16): a per-file I/O error (unreadable/missing
+    // file) exits 1, matching m1-lint/m1-typecheck. Exit 2 is reserved for usage
+    // errors (a bad flag/argument). The batch still continues past the bad file.
+    let (_out, stderr, code) = run_with_file(&["/tmp/m1fmt_definitely_missing_xyz.m1scr"]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a missing input file should exit 1, not 2; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn bad_range_argument_is_a_usage_error_exit_two() {
+    // A malformed argument is a usage error -> exit 2 (distinct from a findings or
+    // I/O exit of 1).
+    let (_out, _stderr, code) = run_with_stdin(&["--range", "notarange", "-"], "x = 1;\n");
+    assert_eq!(code, Some(2));
+}
+
+#[test]
 fn check_flags_unparseable_input() {
     // #77: m1-fmt leaves a syntax-error buffer byte-for-byte unchanged (safe),
     // but `--check` must not then report it clean with exit 0 — that hides broken
