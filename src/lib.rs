@@ -1,7 +1,6 @@
 pub mod config;
 pub mod diagnostics;
 pub mod printer;
-pub mod rules;
 pub mod trivia;
 
 use std::borrow::Cow;
@@ -9,23 +8,10 @@ use std::path::Path;
 
 pub use diagnostics::{FormatError, FormatWarning};
 
-/// Indentation character. The M1 manual mandates tabs, so that is the default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IndentStyle {
-    #[default]
-    Tab,
-    Spaces,
-}
-
-/// Brace placement. The M1 manual mandates Allman ("a separate line for each
-/// brace"), so that is the default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BraceStyle {
-    #[default]
-    Allman,
-    /// K&R / "one true brace": opening brace on the keyword line.
-    KAndR,
-}
+// Code-style enums are shared with m1-lint and now live in m1-workspace (the
+// manual mandates tabs + Allman; both are the defaults). Re-exported here so the
+// existing `m1_fmt::IndentStyle` / `m1_fmt::BraceStyle` paths keep working.
+pub use m1_workspace::{BraceStyle, IndentStyle};
 
 #[derive(Debug, Clone)]
 pub struct FormatOptions {

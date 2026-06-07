@@ -825,7 +825,7 @@ impl Printer {
                 self.emit_indent();
                 self.emit("{");
             }
-            crate::BraceStyle::KAndR => self.emit(" {"),
+            crate::BraceStyle::Kr => self.emit(" {"),
         }
     }
 
@@ -834,7 +834,7 @@ impl Printer {
     fn close_paren_reserve(&self) -> usize {
         match self.brace_style {
             crate::BraceStyle::Allman => 1,
-            crate::BraceStyle::KAndR => 3,
+            crate::BraceStyle::Kr => 3,
         }
     }
 
@@ -986,7 +986,7 @@ impl Printer {
                 self.emit_indent();
                 self.emit("else");
             }
-            crate::BraceStyle::KAndR => self.emit(" else"),
+            crate::BraceStyle::Kr => self.emit(" else"),
         }
         for child in node.children() {
             match child.kind() {
