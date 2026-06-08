@@ -29,7 +29,20 @@ fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> (String, String, Option<
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn m1-fmt");
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    {
+        // Drop stdin after writing so the child sees EOF. A CLI that rejects its
+        // arguments (e.g. an invalid `--range`) exits *before* reading stdin and
+        // closes the pipe, so a BrokenPipe here is expected, not a failure —
+        // racing the child's exit must not make this harness flaky.
+        let mut stdin = child.stdin.take().unwrap();
+        if let Err(e) = stdin.write_all(input) {
+            assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::BrokenPipe,
+                "writing to m1-fmt stdin failed: {e}"
+            );
+        }
+    }
     let out = child.wait_with_output().unwrap();
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -249,7 +262,20 @@ fn run_with_stdin_bytes_raw(args: &[&str], input: &[u8]) -> (Vec<u8>, String, Op
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn m1-fmt");
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    {
+        // Drop stdin after writing so the child sees EOF. A CLI that rejects its
+        // arguments (e.g. an invalid `--range`) exits *before* reading stdin and
+        // closes the pipe, so a BrokenPipe here is expected, not a failure —
+        // racing the child's exit must not make this harness flaky.
+        let mut stdin = child.stdin.take().unwrap();
+        if let Err(e) = stdin.write_all(input) {
+            assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::BrokenPipe,
+                "writing to m1-fmt stdin failed: {e}"
+            );
+        }
+    }
     let out = child.wait_with_output().unwrap();
     (
         out.stdout,
