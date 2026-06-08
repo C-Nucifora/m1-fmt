@@ -52,6 +52,26 @@ fn comment_before_is_clause_brace_stays_before_the_brace() {
 }
 
 #[test]
+fn comment_between_when_subject_and_brace_stays_before_the_brace() {
+    // #76 (extended to `when`): a comment between `when (subject)` and its `{`
+    // must stay on its own line before the brace — exactly like `if (...)` and
+    // `is (...)`. It must NOT be pulled inside the block and indented in front of
+    // the first `is`-clause.
+    let src = "when (S) // subj\n{\nis (A)\n{\nValue = 1;\n}\n}\n";
+    let out = fmt(src, &FormatOptions::default());
+    assert!(
+        out.contains("when (S)\n// subj\n{"),
+        "comment should sit before the when brace, not inside the block:\n{out}"
+    );
+    assert!(
+        !out.contains("{\n\t// subj"),
+        "comment must not be relocated inside the block:\n{out}"
+    );
+    // Idempotent.
+    assert_eq!(fmt(&out, &FormatOptions::default()), out, "not idempotent");
+}
+
+#[test]
 fn allman_puts_else_on_its_own_line() {
     let out = fmt(
         "if (a) {\nValue = 1;\n} else {\nValue = 2;\n}\n",
