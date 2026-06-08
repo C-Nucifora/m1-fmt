@@ -78,12 +78,12 @@ impl Printer {
         let rbrace = self
             .find_child_of_kind(node, Kind::RBrace)
             .map(|c| c.byte_range().start);
-        for child in node.children() {
-            match child.kind() {
-                Kind::LBrace | Kind::RBrace => {}
-                _ => self.print_statement_line(child),
-            }
-        }
+        let stmts: Vec<Node> = node
+            .children()
+            .into_iter()
+            .filter(|c| !matches!(c.kind(), Kind::LBrace | Kind::RBrace))
+            .collect();
+        self.print_statement_lines(&stmts);
         // Flush any trailing comments before the closing brace.
         if let Some(end) = rbrace {
             self.flush_trivia_before(end);
@@ -210,6 +210,7 @@ impl Printer {
         // `is` `(` state `)` block
         let start = node.byte_range().start;
         let end_line = node.range().end.line as usize;
+        let end_byte = node.byte_range().end;
         self.inject_trivia_before(start);
         self.emit_indent();
         self.emit("is (");
@@ -228,7 +229,7 @@ impl Printer {
                 }
             }
         }
-        let eol = self.take_eol_comment(end_line);
+        let eol = self.take_eol_comment(end_line, end_byte, usize::MAX);
         self.emit_eol(eol);
         self.emit_newline();
     }

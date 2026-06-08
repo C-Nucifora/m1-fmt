@@ -42,6 +42,21 @@ struct Args {
     range: Option<String>,
 }
 
+/// Read a file's text via the tolerant workspace decoder, but preserve a leading
+/// UTF-8 BOM that the decoder strips (m1-workspace#9). A formatter round-trips its
+/// input, so a BOM-prefixed file must keep its BOM; `format_str_with` then carries
+/// it through to the output.
+fn read_text_preserving_bom(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let had_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let decoded = m1_workspace::decode(bytes);
+    Ok(if had_bom {
+        format!("\u{FEFF}{decoded}")
+    } else {
+        decoded
+    })
+}
+
 /// Parse a `START:END` (1-based, inclusive) range argument.
 fn parse_range(s: &str) -> Option<(usize, usize)> {
     let (a, b) = s.split_once(':')?;
@@ -103,7 +118,25 @@ fn print_diff(name: &str, original: &str, formatted: &str) {
     print!("{}", diff::unified_diff(name, original, formatted));
 }
 
+/// Restore the default SIGPIPE disposition. Rust ignores SIGPIPE at startup, so
+/// writing to a closed stdout/stderr (e.g. `m1-fmt … | head -1`) returns an
+/// error that `print!`/`eprintln!` turn into a panic (exit 101). Resetting it to
+/// `SIG_DFL` lets the kernel terminate us quietly on a broken pipe, the
+/// conventional behaviour for a Unix filter (#epipe).
+#[cfg(unix)]
+fn reset_sigpipe() {
+    // Safety: a bare `signal(2)` call with a constant handler; no Rust state is
+    // touched and it runs before any output is produced.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() {
+    reset_sigpipe();
     let mut args = Args::parse();
     let mut any_changed = false;
     let mut any_error = false;
@@ -143,7 +176,17 @@ fn main() {
             eprintln!("m1-fmt: {}: {}", args.stdin_filename, e);
             process::exit(2);
         }
-        let src = m1_workspace::decode(bytes);
+        // The tolerant decoder strips a leading UTF-8 BOM (m1-workspace#9). For a
+        // formatter that round-trips its input we must NOT silently drop it: detect
+        // it on the raw bytes and re-prepend it so `format_str_with` preserves it
+        // (on both the normal path and the syntax-error passthrough) (#bom).
+        let had_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+        let decoded = m1_workspace::decode(bytes);
+        let src = if had_bom {
+            format!("\u{FEFF}{decoded}")
+        } else {
+            decoded
+        };
         match format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
             m1_fmt::FormatResult {
                 output,
@@ -190,8 +233,10 @@ fn main() {
             // `.m1scr` may carry Windows-1252 bytes (e.g. `°` in a comment);
             // decode tolerantly via the shared workspace decoder so a valid
             // MoTeC script is not rejected by a strict UTF-8 read (#58). The
-            // diff path reuses the same decoded text as the original.
-            let read = m1_workspace::read_text(path).map_err(m1_fmt::FormatError::IoError);
+            // diff path reuses the same decoded text as the original. The
+            // decoder strips a leading BOM (m1-workspace#9); read raw bytes so we
+            // can detect and preserve it (a formatter must round-trip its input).
+            let read = read_text_preserving_bom(path).map_err(m1_fmt::FormatError::IoError);
             let original = read.as_ref().ok().cloned();
             let outcome = read.and_then(|src| {
                 format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
