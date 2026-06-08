@@ -69,6 +69,14 @@ impl Printer {
 /// Relative binding precedence of a binary operator (higher binds tighter),
 /// mirroring the grammar's precedence table. Used to flatten only same-level
 /// chains so wrapping never splits a tighter-binding sub-expression.
+///
+/// NOTE: binary-operator handling deliberately does NOT use
+/// `m1_core::is_binary_op`. That predicate only answers the boolean "is this a
+/// binary operator?"; the printer instead needs each operator's *relative
+/// precedence* to decide where a chain may be split, which is inherently a
+/// ranked table rather than a flat membership set. The operator is also emitted
+/// verbatim via `Node::text()` (see `emit_binary_flat`), so there is no
+/// operator-kind `matches!` to fold into the shared predicate.
 fn op_prec(op: &str) -> u8 {
     match op {
         "or" | "||" => 1,
