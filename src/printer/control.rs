@@ -181,7 +181,22 @@ impl Printer {
                     self.emit(")");
                 }
                 Kind::LBrace => {
-                    self.emit_block_open(true);
+                    // A comment between the `when (subject)` opener and its `{`
+                    // belongs on its own line *before* the brace — not pulled
+                    // inside the block and indented ahead of the first `is`-clause
+                    // (#76, extended to `when`). Mirror `print_block`'s handling.
+                    let lbrace = child.byte_range().start;
+                    if self.trivia.front().is_some_and(|t| t.byte_offset < lbrace) {
+                        self.emit_newline();
+                        if let Some(first) = self.trivia.front() {
+                            self.prev_end_line = Some(first.source_line);
+                        }
+                        self.flush_trivia_before(lbrace);
+                        self.emit_indent();
+                        self.emit("{");
+                    } else {
+                        self.emit_block_open(true);
+                    }
                     self.emit_newline();
                     self.indent += 1;
                     in_body = true;
