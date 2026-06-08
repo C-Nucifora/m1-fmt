@@ -11,16 +11,33 @@ impl Printer {
     // ---- Source file ------------------------------------------------------
 
     pub(super) fn print_source_file(&mut self, root: Node) {
-        for child in root.children() {
-            self.print_statement_line(child);
-        }
+        let children = root.children();
+        Self::print_statement_lines(self, &children);
         self.flush_remaining_trivia();
+    }
+
+    /// Print a run of sibling statements, computing each statement's EOL-comment
+    /// byte ceiling (the start byte of the next non-comment statement) so a
+    /// statement only claims a trailing comment that falls in its own slot.
+    pub(super) fn print_statement_lines(&mut self, children: &[Node]) {
+        for (i, child) in children.iter().enumerate() {
+            // The next statement on the same line bounds this statement's EOL
+            // comment window; comments are not statements, so skip past them.
+            let next_start = children[i + 1..]
+                .iter()
+                .find(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+                .map(|c| c.byte_range().start)
+                .unwrap_or(usize::MAX);
+            self.print_statement_line(*child, next_start);
+        }
     }
 
     /// A statement at file scope or inside a block: handles own-line trivia
     /// injection, indentation, the statement, and a trailing EOL comment. The
-    /// handling is identical at file scope and inside a block.
-    pub(super) fn print_statement_line(&mut self, node: Node) {
+    /// handling is identical at file scope and inside a block. `next_start` is
+    /// the byte offset where the next sibling statement begins (or `usize::MAX`
+    /// for the last one), used to scope the trailing-comment window.
+    pub(super) fn print_statement_line(&mut self, node: Node, next_start: usize) {
         // Comments are extras: they may show up as direct children. Skip them;
         // they are handled via the trivia list.
         if matches!(node.kind(), Kind::LineComment | Kind::BlockComment) {
@@ -29,16 +46,17 @@ impl Printer {
         let start = node.byte_range().start;
         let start_line = node.range().start.line as usize;
         let end_line = node.range().end.line as usize;
+        let end_byte = node.byte_range().end;
         self.inject_trivia_before(start);
         self.emit_blank_gap(start_line);
         self.emit_indent();
         // Reserve the trailing `;` (statements that carry one) plus any EOL
         // comment, so a line that is over-budget only because of them wraps.
         let semi = usize::from(ends_with_semicolon(node.kind()));
-        self.eol_reserve = self.pending_eol_width(end_line) + semi;
+        self.eol_reserve = self.pending_eol_width(end_line, end_byte, next_start) + semi;
         self.print_statement(node);
         self.eol_reserve = 0;
-        let eol = self.take_eol_comment(end_line);
+        let eol = self.take_eol_comment(end_line, end_byte, next_start);
         self.emit_eol(eol);
         self.emit_newline();
         self.prev_end_line = Some(end_line);

@@ -237,3 +237,98 @@ fn stdin_windows1252_byte_is_decoded_not_panicked() {
         "the decoded degree sign must survive formatting via stdin; stdout: {stdout:?}"
     );
 }
+
+/// A leading UTF-8 BOM must survive formatting via stdin. The tolerant decoder
+/// strips a BOM (m1-workspace#9), but a formatter round-trips its input — a
+/// BOM-prefixed file must keep its BOM while the body is still reformatted.
+fn run_with_stdin_bytes_raw(args: &[&str], input: &[u8]) -> (Vec<u8>, String, Option<i32>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn m1-fmt");
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    (
+        out.stdout,
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code(),
+    )
+}
+
+#[test]
+fn stdin_bom_is_preserved_and_body_formatted() {
+    // BOM + valid-but-unformatted code: the BOM stays, the body is reformatted.
+    let input: &[u8] = b"\xef\xbb\xbflocal x=1;\n";
+    let (stdout, stderr, code) = run_with_stdin_bytes_raw(&[], input);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!(
+        stdout, b"\xef\xbb\xbflocal x = 1;\n",
+        "BOM must be preserved while the body is reformatted; got {stdout:?}"
+    );
+}
+
+#[test]
+fn stdin_bom_with_syntax_error_is_byte_for_byte_unchanged() {
+    // BOM + syntax error: the documented passthrough must keep the buffer
+    // byte-for-byte, BOM included (the BOM is not the parse error).
+    let input: &[u8] = b"\xef\xbb\xbfx = ;\n";
+    let (stdout, _stderr, code) = run_with_stdin_bytes_raw(&[], input);
+    // Syntax errors exit non-zero in every mode (#77), but the bytes are intact.
+    assert_ne!(code, Some(0));
+    assert_eq!(
+        stdout, input,
+        "BOM + syntax error must pass through byte-for-byte; got {stdout:?}"
+    );
+}
+
+/// A truncated pipe (`m1-fmt … | head -1`) must terminate quietly rather than
+/// panic on the broken write (Rust's default ignore-then-panic -> exit 101). On
+/// Unix we reset SIGPIPE to default, so the process dies on the signal (exit 141)
+/// instead. The key assertion is "not a panic": stderr must be free of a panic
+/// message and the exit code must not be 101.
+#[cfg(unix)]
+#[test]
+fn broken_pipe_does_not_panic() {
+    use std::process::Command;
+    // Generate lots of output, pipe it through `head -1`, and observe m1-fmt.
+    // A long, repeated statement guarantees many output lines.
+    let line = "local reallyQuiteLongVariableName = anotherQuiteLongExpressionValue;\n";
+    let big = line.repeat(50_000);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn m1-fmt");
+    // Feed stdin on a thread so a full pipe can't deadlock us.
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(big.as_bytes());
+    });
+    // Read only the first line, then drop the reader to close the pipe.
+    {
+        use std::io::BufRead;
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut first = String::new();
+        let _ = reader.read_line(&mut first);
+        // Dropping `reader` here closes the read end -> SIGPIPE on next write.
+    }
+    let out = child.wait_with_output().unwrap();
+    let _ = writer.join();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "broken pipe must not panic; stderr: {stderr}"
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(101),
+        "broken pipe must not exit 101 (panic); stderr: {stderr}"
+    );
+}

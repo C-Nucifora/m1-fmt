@@ -150,12 +150,19 @@ impl Printer {
     /// re-aligned under the opening `/*` at the current indent; every other line
     /// keeps its original leading whitespace. (Body rewrapping is deferred to v3.)
     pub(super) fn emit_block_comment(&mut self, text: &str) {
+        // Only re-align ` *` continuation lines for a genuine javadoc block (one
+        // that opens with `/**`). A plain `/*` block whose interior lines happen
+        // to start with `*` (ASCII art, a boxed banner, commented-out pointer
+        // code) is NOT javadoc; rewriting its leading whitespace would corrupt
+        // that load-bearing layout (#8). Such blocks fall through to the verbatim
+        // branch below.
+        let is_javadoc = text.starts_with("/**");
         let mut first = true;
         for line in text.split('\n') {
             if !first {
                 self.emit_newline();
                 let trimmed = line.trim_start();
-                if trimmed.starts_with('*') {
+                if is_javadoc && trimmed.starts_with('*') {
                     // Conventional javadoc continuation: re-align ` *` under the
                     // opening `/*` at the current indent.
                     self.emit_indent();
@@ -189,11 +196,17 @@ impl Printer {
     }
 
     /// Width of the pending EOL comment for the statement ending on
-    /// `stmt_end_line`, as it will be rendered (two spaces + normalized text),
+    /// `stmt_end_line` (last byte `stmt_end_byte`, next statement starting at
+    /// `next_stmt_start`), as it will be rendered (two spaces + normalized text),
     /// or 0 if none.
-    pub(super) fn pending_eol_width(&self, stmt_end_line: usize) -> usize {
+    pub(super) fn pending_eol_width(
+        &self,
+        stmt_end_line: usize,
+        stmt_end_byte: usize,
+        next_stmt_start: usize,
+    ) -> usize {
         if let Some(item) = self.trivia.front()
-            && is_eol_comment(item, stmt_end_line)
+            && is_eol_comment(item, stmt_end_line, stmt_end_byte, next_stmt_start)
         {
             let rendered = if item.text.starts_with("//") {
                 format_line_comment(&item.text)
@@ -205,11 +218,19 @@ impl Printer {
         0
     }
 
-    /// If the next pending trivia item is on `stmt_end_line` (i.e. it trails the
-    /// statement we just printed), consume and return it as an EOL comment.
-    pub(super) fn take_eol_comment(&mut self, stmt_end_line: usize) -> Option<TriviaItem> {
+    /// If the next pending trivia item trails the statement we just printed —
+    /// same end line and inside this statement's byte window
+    /// (`stmt_end_byte..next_stmt_start`) — consume and return it as an EOL
+    /// comment. The byte window stops an earlier statement on a shared source
+    /// line from claiming a comment that belongs to a later one.
+    pub(super) fn take_eol_comment(
+        &mut self,
+        stmt_end_line: usize,
+        stmt_end_byte: usize,
+        next_stmt_start: usize,
+    ) -> Option<TriviaItem> {
         if let Some(item) = self.trivia.front()
-            && is_eol_comment(item, stmt_end_line)
+            && is_eol_comment(item, stmt_end_line, stmt_end_byte, next_stmt_start)
         {
             return self.trivia.pop_front();
         }

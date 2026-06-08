@@ -59,6 +59,9 @@ pub struct FormatResult {
 /// "couldn't be parsed" from the [`FormatResult`] alone. The CLI uses this to
 /// flag unparseable input under `--check` instead of reporting it clean (#77).
 pub fn syntax_error_count(src: &str) -> usize {
+    // A leading BOM is presentation trivia, not a parse error; strip it before
+    // counting so a BOM-prefixed but otherwise valid file isn't reported broken.
+    let src = src.strip_prefix(BOM).unwrap_or(src);
     let lf: Cow<str> = if src.contains("\r\n") {
         Cow::Owned(src.replace("\r\n", "\n"))
     } else {
@@ -71,7 +74,33 @@ pub fn format_str(src: &str) -> Result<FormatResult, FormatError> {
     format_str_with(src, &FormatOptions::default())
 }
 
+/// The Unicode byte-order mark (U+FEFF). When present at the very start of a
+/// document it must survive formatting untouched — including on the
+/// syntax-error / too-deep passthrough that is documented to return the buffer
+/// byte-for-byte unchanged. The parser/decoder would otherwise drop it, shifting
+/// or silently deleting it (#9-style data loss). We strip it before formatting
+/// and re-prepend it to the output.
+const BOM: char = '\u{FEFF}';
+
 pub fn format_str_with(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
+    // Preserve a leading BOM end-to-end: strip it from the working buffer, format
+    // the body, then re-prepend it so a BOM-prefixed document round-trips with its
+    // BOM intact on every path (normal format *and* the passthrough below).
+    let (bom, src) = match src.strip_prefix(BOM) {
+        Some(rest) => ("\u{FEFF}", rest),
+        None => ("", src),
+    };
+    if !bom.is_empty() {
+        let mut result = format_body(src, opts)?;
+        // `changed` must reflect the body only relative to the BOM-stripped input;
+        // re-prepending the BOM to both sides keeps that comparison honest.
+        result.output.insert_str(0, bom);
+        return Ok(result);
+    }
+    format_body(src, opts)
+}
+
+fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
     // The whole pipeline assumes LF. Normalize CRLF -> LF on input and restore
     // CRLF on output if the input used it, so brace-adjacent blank stripping and
     // trailing-newline normalization behave correctly on CRLF files (#18).
@@ -241,7 +270,16 @@ pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
 pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
     // `.m1scr` is MoTeC source: UTF-8 in practice but may carry Windows-1252
     // bytes (e.g. `°` = 0xB0 in a comment). Decode tolerantly via the shared
-    // workspace decoder rather than failing the strict UTF-8 read (#58).
-    let src = m1_workspace::read_text(path).map_err(FormatError::IoError)?;
+    // workspace decoder rather than failing the strict UTF-8 read (#58). The
+    // decoder strips a leading BOM (m1-workspace#9); read raw bytes so we can
+    // re-prepend it and round-trip a BOM-prefixed file.
+    let bytes = std::fs::read(path).map_err(FormatError::IoError)?;
+    let had_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let decoded = m1_workspace::decode(bytes);
+    let src = if had_bom {
+        format!("\u{FEFF}{decoded}")
+    } else {
+        decoded
+    };
     format_str_with(&src, opts)
 }
