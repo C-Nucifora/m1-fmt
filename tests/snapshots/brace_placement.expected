@@ -17,6 +17,7 @@ when (state)
 		b = 2;
 	}
 }
+
 expand (SEG = 1 to 6)
 {
 	v = SEG;

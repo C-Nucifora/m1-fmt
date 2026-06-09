@@ -75,6 +75,12 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
         if let Some(n) = cfg.continuation_indent {
             o.continuation_indent = n;
         }
+        if let Some(b) = cfg.align_assignments {
+            o.align_assignments = b;
+        }
+        if let Some(b) = cfg.reflow_comments {
+            o.reflow_comments = b;
+        }
     }
 
     // Layer 3: explicit CLI flags win over everything.

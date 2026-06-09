@@ -32,6 +32,14 @@ pub struct FormatOptions {
     /// Development Manual specifies a single extra level, so the default is `1`;
     /// teams preferring the older `+2` can override it.
     pub continuation_indent: usize,
+    /// Opt-in (#96): align the `=` of contiguous runs of simple single-line
+    /// assignments. Not a manual mandate (the real corpora use it), so off by
+    /// default per the defaults-follow-the-manual policy.
+    pub align_assignments: bool,
+    /// Opt-in (#95): split over-width `//` comment lines onto continuation
+    /// comment lines. Split-only — authored short lines are never joined, and
+    /// `///`-doc / `@m1:` annotation lines are never touched.
+    pub reflow_comments: bool,
 }
 
 impl Default for FormatOptions {
@@ -43,6 +51,8 @@ impl Default for FormatOptions {
             indent_width: 4,
             brace_style: BraceStyle::default(),
             continuation_indent: 1,
+            align_assignments: false,
+            reflow_comments: false,
         }
     }
 }
@@ -205,26 +215,64 @@ pub fn format_range(
         return Ok(None);
     }
 
-    // Snap the requested range outward to the span of every top-level statement
-    // it intersects. Comments are handled as trivia within those lines.
-    let mut covered: Option<(usize, usize)> = None;
-    for child in cst.root().children() {
-        if matches!(
-            child.kind(),
-            m1_core::Kind::LineComment | m1_core::Kind::BlockComment
-        ) {
+    // Snap the requested range to the DEEPEST run of complete statements that
+    // fully covers it (#98): formatting one line inside a long `when` block
+    // reformats just that statement, not the whole block. The covered slice is
+    // formatted standalone (the parser ignores indentation) and re-prefixed
+    // with the original block indentation on splice-back. When no nested run
+    // covers the request (it touches an `is (…)` header, a brace line, …),
+    // fall back to whole top-level statements, as before.
+    let snap = |children: Vec<m1_core::Node>| -> Option<(usize, usize)> {
+        let mut covered: Option<(usize, usize)> = None;
+        for child in children {
+            if matches!(
+                child.kind(),
+                m1_core::Kind::LineComment | m1_core::Kind::BlockComment
+            ) {
+                continue;
+            }
+            let s = child.range().start.line as usize;
+            let e = child.range().end.line as usize;
+            if s <= req_end_line && e >= req_start_line {
+                covered = Some(match covered {
+                    Some((cs, ce)) => (cs.min(s), ce.max(e)),
+                    None => (s, e),
+                });
+            }
+        }
+        covered
+    };
+
+    // Deepest block whose overlapped children fully cover the request.
+    let mut best: Option<(usize, usize)> = None;
+    let mut best_depth = 0usize;
+    for node in cst.root().descendants() {
+        if node.kind() != m1_core::Kind::Block {
             continue;
         }
-        let s = child.range().start.line as usize;
-        let e = child.range().end.line as usize;
-        if s <= req_end_line && e >= req_start_line {
-            covered = Some(match covered {
-                Some((cs, ce)) => (cs.min(s), ce.max(e)),
-                None => (s, e),
-            });
+        let depth = {
+            // Nesting depth = number of Block ancestors plus this one.
+            let mut d = 1usize;
+            let mut p = node.parent();
+            while let Some(a) = p {
+                if a.kind() == m1_core::Kind::Block {
+                    d += 1;
+                }
+                p = a.parent();
+            }
+            d
+        };
+        if let Some((s, e)) = snap(node.children())
+            && s <= req_start_line
+            && e >= req_end_line
+            && depth > best_depth
+        {
+            best = Some((s, e));
+            best_depth = depth;
         }
     }
 
+    let covered = best.or_else(|| snap(cst.root().children()));
     let Some((start_line, end_line)) = covered else {
         return Ok(None);
     };
@@ -243,16 +291,51 @@ pub fn format_range(
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
         .collect::<Vec<_>>()
         .join("\n");
-    let result = format_str_with(&slice, opts)?;
+    // A nested snap formats at indent 0; restore the original block indentation
+    // (taken verbatim from the snapped region's first line) on every non-blank
+    // output line so the splice keeps its depth (#98). The slice is wrapped
+    // against a budget reduced by that prefix's display width, so re-indented
+    // lines still respect `line_width`.
+    let indent_prefix: String = if best_depth > 0 {
+        let first = slice.split('\n').next().unwrap_or("");
+        first[..first.len() - first.trim_start_matches(['\t', ' ']).len()].to_string()
+    } else {
+        String::new()
+    };
+    let prefix_cols: usize = indent_prefix
+        .chars()
+        .map(|c| if c == '\t' { opts.indent_width } else { 1 })
+        .sum();
+    let slice_opts = FormatOptions {
+        line_width: opts.line_width.saturating_sub(prefix_cols).max(20),
+        ..opts.clone()
+    };
+    let result = format_str_with(&slice, &slice_opts)?;
+    let reindented = if indent_prefix.is_empty() {
+        result.output
+    } else {
+        result
+            .output
+            .split_inclusive('\n')
+            .map(|line| {
+                let content = line.strip_suffix('\n').unwrap_or(line);
+                if content.trim().is_empty() {
+                    line.to_string()
+                } else {
+                    format!("{indent_prefix}{line}")
+                }
+            })
+            .collect()
+    };
     // The extracted slice has no trailing newline (it is rejoined from lines) but
     // the formatter always emits one, so compare content ignoring that artifact —
     // the caller splices `output` back over whole lines regardless. Compare on the
     // LF form so the line-ending normalization below is not itself a "change".
-    let changed = result.output.trim_end_matches('\n') != slice.trim_end_matches('\n');
+    let changed = reindented.trim_end_matches('\n') != slice.trim_end_matches('\n');
     let output = if uses_crlf {
-        result.output.replace('\n', "\r\n")
+        reindented.replace('\n', "\r\n")
     } else {
-        result.output
+        reindented
     };
     Ok(Some(RangeResult {
         output,
