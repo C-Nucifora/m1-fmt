@@ -64,6 +64,19 @@ safety).
   for trailing end-of-line comments, `;`, and `,`.
 - **`--max-blank-lines <n>`** collapses runs of blank lines and strips
   brace-adjacent blanks; author blank lines are otherwise preserved.
+- **Blank line after `when` blocks** (manual p.65: "all functions and methods to
+  end with a blank line"): one blank is inserted after a top-level `when` block
+  when missing (never inside nested blocks, never at EOF).
+- **Opt-in `.m1fmt.toml` extras** (off by default — neither is a manual
+  mandate):
+  ```toml
+  align_assignments = true   # align `=` in runs of simple assignments
+  reflow_comments   = true   # split over-width `//` comments (never joins
+                             # short lines; never touches @m1: annotations)
+  ```
+- **Range formatting** (`--range`, LSP `rangeFormatting`) snaps to the deepest
+  run of complete statements covering the request — formatting one line inside
+  a long `when` block reformats just that statement, re-indented in place.
 
 ## CLI usage
 

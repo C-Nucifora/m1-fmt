@@ -41,6 +41,10 @@ pub struct FileConfig {
     pub indent_width: Option<usize>,
     /// Maps to `FormatOptions::continuation_indent`.
     pub continuation_indent: Option<usize>,
+    /// Maps to `FormatOptions::align_assignments` (opt-in, #96).
+    pub align_assignments: Option<bool>,
+    /// Maps to `FormatOptions::reflow_comments` (opt-in, #95).
+    pub reflow_comments: Option<bool>,
 }
 
 /// Parse a `.m1fmt.toml` body. Unknown keys are ignored; missing keys stay
@@ -72,6 +76,8 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
         indent_style,
         indent_width: uint("indent_width"),
         continuation_indent: uint("continuation_indent"),
+        align_assignments: value.get("align_assignments").and_then(|v| v.as_bool()),
+        reflow_comments: value.get("reflow_comments").and_then(|v| v.as_bool()),
     })
 }
 

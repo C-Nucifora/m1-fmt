@@ -127,7 +127,16 @@ pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
     // the output (non-idempotent, #19). Doing the strip first is stable in one
     // pass.
     normalize::strip_brace_adjacent_blanks(&mut p.output);
+    // Manual p.65 (#97): a top-level when block ends with a blank line. Runs
+    // before the trailing normalization so a blank inserted at EOF is trimmed.
+    normalize::ensure_blank_after_top_level_when(&mut p.output);
     normalize::normalize_trailing(&mut p.output, opts.max_blank_lines);
+    if opts.reflow_comments {
+        normalize::reflow_long_line_comments(&mut p.output, opts.line_width);
+    }
+    if opts.align_assignments {
+        normalize::align_assignment_groups(&mut p.output, opts.line_width);
+    }
     p.output
 }
 

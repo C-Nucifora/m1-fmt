@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::process;
 
 mod config_resolve;
-mod diff;
 
 #[derive(Parser, Debug)]
 #[command(name = "m1-fmt", version, about = "Autoformatter for MoTeC M1 scripts")]
@@ -115,7 +114,10 @@ fn cli_overrides(args: &Args) -> config_resolve::CliOverrides {
 
 /// Print a unified diff between `original` and `formatted`.
 fn print_diff(name: &str, original: &str, formatted: &str) {
-    print!("{}", diff::unified_diff(name, original, formatted));
+    print!(
+        "{}",
+        m1_workspace::diff::unified_diff(name, original, formatted)
+    );
 }
 
 /// Restore the default SIGPIPE disposition. Rust ignores SIGPIPE at startup, so
