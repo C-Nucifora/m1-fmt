@@ -230,6 +230,46 @@ fn in_place_write_is_atomic_and_leaves_no_temp_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #113: a failed in-place write must fail the run. Regression: `-i` printed the
+/// I/O error to stderr but still exited 0, so a read-only file (or any write
+/// failure) was silently swallowed by CI and format-on-save. We force the failure
+/// by making the *containing directory* read-only — `atomic_write` writes a temp
+/// file in that directory and renames it over the target, so a non-writable dir
+/// makes the write fail deterministically. Unix-only: directory write permissions
+/// have no equivalent meaning on Windows.
+#[cfg(unix)]
+#[test]
+fn in_place_write_failure_exits_nonzero() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("m1fmt_ro_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("script.m1scr");
+    // Unformatted, so the file *would* be rewritten — exercising the write path.
+    std::fs::write(&path, "local x=1;\n").unwrap();
+
+    // Make the directory read-only so the atomic temp-file create/rename fails.
+    let original = std::fs::metadata(&dir).unwrap().permissions();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let (_, stderr, code) = run_with_file(&["-i", path.to_str().unwrap()]);
+
+    // Restore write permission before any assertion so cleanup always succeeds.
+    std::fs::set_permissions(&dir, original).unwrap();
+
+    assert_eq!(
+        code,
+        Some(1),
+        "a failed in-place write must exit 1, not 0 (#113); stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("script.m1scr"),
+        "the failing path must be reported on stderr; stderr: {stderr}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #67: the stdin path must decode non-UTF-8 (Windows-1252) bytes tolerantly,
 /// the same way the file path does, instead of panicking on the strict
 /// `read_to_string().unwrap()`. A `°` is the single CP1252 byte `0xB0`, which is

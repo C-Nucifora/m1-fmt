@@ -44,6 +44,13 @@ struct Args {
     /// to whole top-level statements. For LSP/editor format-on-selection.
     #[arg(long, value_name = "START:END")]
     range: Option<String>,
+
+    /// Number of worker threads for parallel formatting (default: all available
+    /// CPUs). `--jobs 1` forces fully serial processing; useful for reproducible
+    /// profiling or constrained CI runners. Only affects directory / multi-file
+    /// runs; stdin and single-file runs are inherently serial.
+    #[arg(long, value_name = "N")]
+    jobs: Option<usize>,
 }
 
 /// Read a file's text via the tolerant workspace decoder, but preserve a leading
@@ -219,6 +226,11 @@ fn process_file(
                 } else if args.in_place {
                     if let Err(e) = m1_workspace::atomic_write(path, result.output.as_bytes()) {
                         let _ = writeln!(out.stderr, "m1-fmt: {}: {}", path.display(), e);
+                        // A failed in-place write (e.g. a read-only file) must fail
+                        // the run: previously the error was printed but `-i` still
+                        // exited 0, so CI / format-on-save silently swallowed it
+                        // (#113).
+                        out.error = true;
                     }
                 } else {
                     out.stdout.push_str(&result.output);
@@ -258,6 +270,26 @@ fn main() {
     // the same as passing no file arguments at all (matches rustfmt/black/gofmt).
     if args.files.len() == 1 && args.files[0].as_os_str() == "-" {
         args.files.clear();
+    }
+
+    // Cap the rayon worker pool when --jobs is given (default: all CPUs). Must run
+    // before any `par_iter` below initialises the global pool. `--jobs 1` makes the
+    // multi-file loop fully serial, which keeps profiling reproducible and matches
+    // the serial path byte-for-byte. build_global only fails if the pool is already
+    // initialised, which cannot happen this early, so a usage error is reported.
+    if let Some(n) = args.jobs {
+        if n == 0 {
+            eprintln!("m1-fmt: --jobs must be at least 1");
+            process::exit(2);
+        }
+        if rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .is_err()
+        {
+            eprintln!("m1-fmt: failed to configure {n} worker thread(s)");
+            process::exit(2);
+        }
     }
 
     let range = match args.range.as_deref() {
