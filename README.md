@@ -74,6 +74,13 @@ safety).
   reflow_comments   = true   # split over-width `//` comments (never joins
                              # short lines; never touches @m1: annotations)
   ```
+- **Format-off regions** (`@m1:fmt`): the lines from a standalone
+  `// @m1:fmt(off)` comment through the next standalone `// @m1:fmt(on)`
+  (markers inclusive) pass through the formatter byte-for-byte — for
+  hand-aligned constant tables and other deliberate layout. An unclosed `off`
+  runs to end of file; a marker sharing a line with code is inert; `--range`
+  requests touching an off region are declined. Off-region lines are exempt
+  from line-too-long warnings.
 - **Range formatting** (`--range`, LSP `rangeFormatting`) snaps to the deepest
   run of complete statements covering the request — formatting one line inside
   a long `when` block reformats just that statement, re-indented in place.
