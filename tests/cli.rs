@@ -358,3 +358,98 @@ fn broken_pipe_does_not_panic() {
         "broken pipe must not exit 101 (panic); stderr: {stderr}"
     );
 }
+
+/// Create a uniquely-named temp directory tree for the directory-argument
+/// tests (#106) and return its path.
+fn temp_tree(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("m1fmt-dir-{}-{}", std::process::id(), name));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    dir
+}
+
+const UNFORMATTED: &str = "if (A > B) {\n  Value = 1;\n}\n";
+const CANONICAL: &str = "if (A > B)\n{\n\tValue = 1;\n}\n";
+
+#[test]
+fn directory_argument_formats_in_place_recursively() {
+    // #106: a directory argument expands to every `.m1scr` beneath it.
+    let dir = temp_tree("inplace");
+    std::fs::write(dir.join("a.m1scr"), UNFORMATTED).unwrap();
+    std::fs::write(dir.join("sub").join("b.m1scr"), UNFORMATTED).unwrap();
+
+    let (_, stderr, code) = run_with_file(&["-i", dir.to_str().unwrap()]);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.m1scr")).unwrap(),
+        CANONICAL,
+        "top-level script must be reformatted"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("sub").join("b.m1scr")).unwrap(),
+        CANONICAL,
+        "nested script must be reformatted"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_argument_check_reports_each_file() {
+    let dir = temp_tree("check");
+    std::fs::write(dir.join("a.m1scr"), UNFORMATTED).unwrap();
+    std::fs::write(dir.join("sub").join("b.m1scr"), CANONICAL).unwrap();
+
+    let (_, stderr, code) = run_with_file(&["--check", dir.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(1), "one dirty file => exit 1. stderr: {stderr}");
+    assert!(
+        stderr.contains("a.m1scr") && stderr.contains("would reformat"),
+        "dirty file reported. stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("b.m1scr"),
+        "clean file must not be reported. stderr: {stderr}"
+    );
+}
+
+#[test]
+fn directory_argument_requires_an_output_mode() {
+    // Bare-stdout mode would concatenate a whole tree to stdout — almost
+    // certainly a mistake. Directories require -i, --check, or --diff.
+    let dir = temp_tree("nomode");
+    std::fs::write(dir.join("a.m1scr"), CANONICAL).unwrap();
+    let (_, stderr, code) = run_with_file(&[dir.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(2), "usage error. stderr: {stderr}");
+    assert!(
+        stderr.contains("--check") && stderr.contains("-i"),
+        "the error must name the valid modes. stderr: {stderr}"
+    );
+}
+
+#[test]
+fn directory_argument_rejects_range() {
+    // --range targets one buffer; combined with a directory it is ambiguous.
+    let dir = temp_tree("range");
+    std::fs::write(dir.join("a.m1scr"), CANONICAL).unwrap();
+    let (_, stderr, code) = run_with_file(&["--check", "--range", "1:2", dir.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(2), "usage error. stderr: {stderr}");
+    assert!(
+        stderr.contains("--range"),
+        "the error must mention --range. stderr: {stderr}"
+    );
+}
+
+#[test]
+fn empty_directory_reports_and_fails() {
+    // A directory yielding zero scripts must say so and fail, not pass clean —
+    // a mistyped path must not look formatted.
+    let dir = temp_tree("empty");
+    let (_, stderr, code) = run_with_file(&["--check", dir.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("no .m1scr"),
+        "empty directory must be reported. stderr: {stderr}"
+    );
+}

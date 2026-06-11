@@ -7,7 +7,9 @@ mod config_resolve;
 #[derive(Parser, Debug)]
 #[command(name = "m1-fmt", version, about = "Autoformatter for MoTeC M1 scripts")]
 struct Args {
-    /// Files to format (a lone `-`, or no files, reads from stdin)
+    /// Files or directories to format (directories are searched recursively
+    /// for `.m1scr` and require --check, --diff, or -i; a lone `-`, or no
+    /// files, reads from stdin)
     files: Vec<PathBuf>,
 
     /// Check mode: exit 1 if any file would change, don't write
@@ -165,7 +167,40 @@ fn main() {
         },
     };
 
-    if args.files.is_empty() {
+    // Directory arguments expand to every `.m1scr` beneath them via the shared
+    // hardened walk (#106). Directories need an explicit output mode — bare
+    // stdout would concatenate a whole tree — and exclude `--range`, which
+    // targets a single buffer. An empty expansion is reported and fails the run
+    // (a mistyped path must not look formatted), and must not fall through to
+    // the stdin branch below.
+    let had_dir = args.files.iter().any(|f| f.is_dir());
+    if had_dir {
+        if range.is_some() {
+            eprintln!("m1-fmt: --range cannot be combined with a directory argument");
+            process::exit(2);
+        }
+        if !(args.check || args.diff || args.in_place) {
+            eprintln!("m1-fmt: a directory argument requires --check, --diff, or -i/--in-place");
+            process::exit(2);
+        }
+        let mut expanded = Vec::new();
+        for f in &args.files {
+            if f.is_dir() {
+                let found = m1_workspace::find_scripts(f);
+                if found.is_empty() {
+                    eprintln!("m1-fmt: no .m1scr files found under {}", f.display());
+                    any_error = true;
+                } else {
+                    expanded.extend(found);
+                }
+            } else {
+                expanded.push(f.clone());
+            }
+        }
+        args.files = expanded;
+    }
+
+    if args.files.is_empty() && !had_dir {
         // Read from stdin. Discover .m1fmt.toml from the working directory.
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let opts = config_resolve::resolve_opts(cli_overrides(&args), &cwd);
