@@ -453,3 +453,56 @@ fn empty_directory_reports_and_fails() {
         "empty directory must be reported. stderr: {stderr}"
     );
 }
+
+#[test]
+fn multi_file_diff_output_is_ordered_and_deterministic() {
+    // #109: files are formatted in parallel, but the captured per-file output must
+    // be replayed in input order and never interleaved. Run many files (more than
+    // the worker-thread count) several times and assert byte-identical, in-order
+    // output every run.
+    let dir = temp_tree("paralleldiff");
+    let mut paths = Vec::new();
+    for i in 0..12 {
+        let p = dir.join(format!("f{i:02}.m1scr"));
+        std::fs::write(&p, UNFORMATTED).unwrap();
+        paths.push(p.to_str().unwrap().to_string());
+    }
+    let mut args: Vec<&str> = vec!["--diff"];
+    args.extend(paths.iter().map(|s| s.as_str()));
+
+    let (first, _, code) = run_with_file(&args);
+    assert_eq!(code, Some(0), "--diff exits 0 even when files differ");
+    let first = String::from_utf8(first).unwrap();
+
+    // Each file's diff header names the file; the headers must appear in input
+    // order f00, f01, ... f11.
+    let order: Vec<usize> = first
+        .lines()
+        .filter_map(|l| l.strip_prefix("--- "))
+        // header is e.g. "--- /tmp/.../f03.m1scr (original)"; take the path word.
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter_map(|name| {
+            name.rsplit('/')
+                .next()
+                .and_then(|f| f.strip_prefix('f'))
+                .and_then(|f| f.strip_suffix(".m1scr"))
+                .and_then(|n| n.parse::<usize>().ok())
+        })
+        .collect();
+    assert_eq!(
+        order,
+        (0..12).collect::<Vec<_>>(),
+        "diff blocks must be emitted in input order; got {order:?}"
+    );
+
+    // Determinism: repeated runs produce identical output.
+    for _ in 0..4 {
+        let (again, _, _) = run_with_file(&args);
+        assert_eq!(
+            String::from_utf8(again).unwrap(),
+            first,
+            "parallel --diff output must be deterministic across runs"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
