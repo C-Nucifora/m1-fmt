@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process;
 
@@ -263,10 +264,19 @@ fn main() {
             }
         }
     } else {
+        // `resolve_opts` walks the filesystem upward looking for `.m1fmt.toml` /
+        // `m1-tools.toml`; the result is identical for every file sharing a parent
+        // directory, so cache it per directory rather than re-walking the tree once
+        // per file. With directory arguments (#106) a whole-workspace `--check .`
+        // would otherwise re-discover config for every script (#108).
+        let overrides = cli_overrides(&args);
+        let mut opts_cache: HashMap<PathBuf, m1_fmt::FormatOptions> = HashMap::new();
         for path in &args.files {
             // Discover .m1fmt.toml upward from the file's own directory.
             let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-            let opts = config_resolve::resolve_opts(cli_overrides(&args), dir);
+            let opts = opts_cache
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| config_resolve::resolve_opts(overrides, dir));
             // `.m1scr` may carry Windows-1252 bytes (e.g. `°` in a comment);
             // decode tolerantly via the shared workspace decoder so a valid
             // MoTeC script is not rejected by a strict UTF-8 read (#58). The
@@ -276,7 +286,7 @@ fn main() {
             let read = read_text_preserving_bom(path).map_err(m1_fmt::FormatError::IoError);
             let original = read.as_ref().ok().cloned();
             let outcome = read.and_then(|src| {
-                format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
+                format_buffer(&src, opts, range).map(|(output, changed, warnings)| {
                     m1_fmt::FormatResult {
                         output,
                         changed,
