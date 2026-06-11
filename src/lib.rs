@@ -1,5 +1,6 @@
 pub mod config;
 pub mod diagnostics;
+mod fmt_off;
 pub mod printer;
 pub mod trivia;
 
@@ -143,6 +144,27 @@ fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatEr
     }
 
     let lf_output = printer::print_with(&cst, opts);
+
+    // `@m1:fmt(off)` / `@m1:fmt(on)` regions (#102): splice the original lines
+    // back over the formatted output, anchored on the markers. A pairing
+    // mismatch (defensive — the printer preserves every comment in order) falls
+    // back to the data-preserving passthrough, like a syntax-error buffer.
+    let off_regions = fmt_off::off_regions(&lf_src, &cst);
+    let (lf_output, off_spans) = if off_regions.is_empty() {
+        (lf_output, Vec::new())
+    } else {
+        match fmt_off::splice(&lf_src, &lf_output, &off_regions) {
+            Some(spliced) => spliced,
+            None => {
+                return Ok(FormatResult {
+                    output: src.to_string(),
+                    changed: false,
+                    warnings: vec![],
+                });
+            }
+        }
+    };
+
     let output = if uses_crlf {
         lf_output.replace('\n', "\r\n")
     } else {
@@ -152,9 +174,16 @@ fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatEr
 
     // Emit line-too-long warnings for lines that remain over budget after
     // wrapping (e.g. an unbreakable atom). `str::lines()` strips the trailing
-    // `\r`, so char counts are correct on CRLF output too.
+    // `\r`, so char counts are correct on CRLF output too. Off-region lines are
+    // deliberate — no warnings there.
     let mut warnings = Vec::new();
     for (line_idx, line) in output.lines().enumerate() {
+        if off_spans
+            .iter()
+            .any(|&(s, e)| line_idx >= s && line_idx <= e)
+        {
+            continue;
+        }
         if line.chars().count() > opts.line_width {
             warnings.push(FormatWarning {
                 kind: diagnostics::WarningKind::LineTooLong,
@@ -276,6 +305,16 @@ pub fn format_range(
     let Some((start_line, end_line)) = covered else {
         return Ok(None);
     };
+
+    // A range touching a `@m1:fmt(off)` region is declined outright (#102):
+    // the region's lines must stay byte-identical, and a partial slice could
+    // not see its markers.
+    if fmt_off::off_regions(src, &cst)
+        .iter()
+        .any(|&(s, e)| s <= end_line && e >= start_line)
+    {
+        return Ok(None);
+    }
 
     // Preserve the document's line ending across the range path. Splitting on
     // `'\n'` leaves a trailing `'\r'` on each line of a CRLF file; rejoining with
