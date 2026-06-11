@@ -1,5 +1,7 @@
 use clap::Parser;
+use rayon::prelude::*;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process;
 
@@ -42,6 +44,13 @@ struct Args {
     /// to whole top-level statements. For LSP/editor format-on-selection.
     #[arg(long, value_name = "START:END")]
     range: Option<String>,
+
+    /// Number of worker threads for parallel formatting (default: all available
+    /// CPUs). `--jobs 1` forces fully serial processing; useful for reproducible
+    /// profiling or constrained CI runners. Only affects directory / multi-file
+    /// runs; stdin and single-file runs are inherently serial.
+    #[arg(long, value_name = "N")]
+    jobs: Option<usize>,
 }
 
 /// Read a file's text via the tolerant workspace decoder, but preserve a leading
@@ -140,6 +149,114 @@ fn reset_sigpipe() {
 #[cfg(not(unix))]
 fn reset_sigpipe() {}
 
+/// The captured result of formatting one file, produced inside the parallel loop
+/// and replayed serially in input order so output stays deterministic (#109).
+/// `stdout`/`stderr` hold the exact bytes the serial loop would have written to
+/// those streams for this file; the flags feed the run-wide exit-code reduction.
+#[derive(Default)]
+struct FileOutcome {
+    stdout: String,
+    stderr: String,
+    changed: bool,
+    error: bool,
+    syntax_error: bool,
+}
+
+/// Read, format, and (for `-i`) write a single file, capturing everything that
+/// would be emitted to stdout/stderr rather than printing directly. Share-nothing:
+/// it borrows only the pre-resolved `opts` for its directory and the immutable
+/// `args`/`range`, so it is safe to run across files in parallel.
+fn process_file(
+    path: &std::path::Path,
+    opts: &m1_fmt::FormatOptions,
+    range: Option<(usize, usize)>,
+    args: &Args,
+) -> FileOutcome {
+    let mut out = FileOutcome::default();
+    // `.m1scr` may carry Windows-1252 bytes (e.g. `°` in a comment); decode
+    // tolerantly via the shared workspace decoder so a valid MoTeC script is not
+    // rejected by a strict UTF-8 read (#58). The diff path reuses the same decoded
+    // text as the original. The decoder strips a leading BOM (m1-workspace#9); read
+    // raw bytes so we can detect and preserve it (a formatter round-trips its input).
+    let read = read_text_preserving_bom(path).map_err(m1_fmt::FormatError::IoError);
+    let original = read.as_ref().ok().cloned();
+    let outcome = read.and_then(|src| {
+        format_buffer(&src, opts, range).map(|(output, changed, warnings)| m1_fmt::FormatResult {
+            output,
+            changed,
+            warnings,
+        })
+    });
+    match outcome {
+        Ok(result) => {
+            for w in &result.warnings {
+                let _ = writeln!(
+                    out.stderr,
+                    "{}:{}: warning: {}",
+                    path.display(),
+                    w.line,
+                    w.message
+                );
+            }
+            if let Some(src) = &original {
+                let serr = m1_fmt::syntax_error_count(src);
+                if serr > 0 {
+                    let _ = writeln!(
+                        out.stderr,
+                        "m1-fmt: {}: {serr} syntax error(s); left unchanged",
+                        path.display()
+                    );
+                    out.syntax_error = true;
+                }
+            }
+            // The bare-stdout case must print unconditionally (mirroring the stdin
+            // branch); gating it on `changed` truncated an already-formatted file to
+            // empty (#59). `-i`/`--diff`/`--check` stay gated on `changed`.
+            if result.changed {
+                out.changed = true;
+                if args.check {
+                    let _ = writeln!(out.stderr, "{}: would reformat", path.display());
+                } else if args.diff {
+                    let orig = original.as_deref().unwrap_or("");
+                    out.stdout.push_str(&m1_workspace::diff::unified_diff(
+                        &path.display().to_string(),
+                        orig,
+                        &result.output,
+                    ));
+                } else if args.in_place {
+                    if let Err(e) = m1_workspace::atomic_write(path, result.output.as_bytes()) {
+                        let _ = writeln!(out.stderr, "m1-fmt: {}: {}", path.display(), e);
+                        // A failed in-place write (e.g. a read-only file) must fail
+                        // the run: previously the error was printed but `-i` still
+                        // exited 0, so CI / format-on-save silently swallowed it
+                        // (#113).
+                        out.error = true;
+                    }
+                } else {
+                    out.stdout.push_str(&result.output);
+                }
+            } else if !args.check && !args.diff && !args.in_place {
+                out.stdout.push_str(&result.output);
+            }
+        }
+        Err(m1_fmt::FormatError::SyntaxErrors(diags)) => {
+            let _ = writeln!(
+                out.stderr,
+                "m1-fmt: skipping {}: {} syntax error(s)",
+                path.display(),
+                diags.len()
+            );
+            // A skipped, unparseable file is not a clean success either.
+            out.syntax_error = true;
+        }
+        Err(e) => {
+            let _ = writeln!(out.stderr, "m1-fmt: {}: {}", path.display(), e);
+            out.error = true;
+        }
+    }
+    out
+}
+
 fn main() {
     reset_sigpipe();
     let mut args = Args::parse();
@@ -153,6 +270,26 @@ fn main() {
     // the same as passing no file arguments at all (matches rustfmt/black/gofmt).
     if args.files.len() == 1 && args.files[0].as_os_str() == "-" {
         args.files.clear();
+    }
+
+    // Cap the rayon worker pool when --jobs is given (default: all CPUs). Must run
+    // before any `par_iter` below initialises the global pool. `--jobs 1` makes the
+    // multi-file loop fully serial, which keeps profiling reproducible and matches
+    // the serial path byte-for-byte. build_global only fails if the pool is already
+    // initialised, which cannot happen this early, so a usage error is reported.
+    if let Some(n) = args.jobs {
+        if n == 0 {
+            eprintln!("m1-fmt: --jobs must be at least 1");
+            process::exit(2);
+        }
+        if rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .is_err()
+        {
+            eprintln!("m1-fmt: failed to configure {n} worker thread(s)");
+            process::exit(2);
+        }
     }
 
     let range = match args.range.as_deref() {
@@ -269,82 +406,47 @@ fn main() {
         // directory, so cache it per directory rather than re-walking the tree once
         // per file. With directory arguments (#106) a whole-workspace `--check .`
         // would otherwise re-discover config for every script (#108).
+        //
+        // Resolved serially up front so the parallel loop below borrows the cache
+        // read-only and stays share-nothing (#109).
         let overrides = cli_overrides(&args);
         let mut opts_cache: HashMap<PathBuf, m1_fmt::FormatOptions> = HashMap::new();
         for path in &args.files {
-            // Discover .m1fmt.toml upward from the file's own directory.
             let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-            let opts = opts_cache
+            opts_cache
                 .entry(dir.to_path_buf())
                 .or_insert_with(|| config_resolve::resolve_opts(overrides, dir));
-            // `.m1scr` may carry Windows-1252 bytes (e.g. `°` in a comment);
-            // decode tolerantly via the shared workspace decoder so a valid
-            // MoTeC script is not rejected by a strict UTF-8 read (#58). The
-            // diff path reuses the same decoded text as the original. The
-            // decoder strips a leading BOM (m1-workspace#9); read raw bytes so we
-            // can detect and preserve it (a formatter must round-trip its input).
-            let read = read_text_preserving_bom(path).map_err(m1_fmt::FormatError::IoError);
-            let original = read.as_ref().ok().cloned();
-            let outcome = read.and_then(|src| {
-                format_buffer(&src, opts, range).map(|(output, changed, warnings)| {
-                    m1_fmt::FormatResult {
-                        output,
-                        changed,
-                        warnings,
-                    }
-                })
-            });
-            match outcome {
-                Ok(result) => {
-                    for w in &result.warnings {
-                        eprintln!("{}:{}: warning: {}", path.display(), w.line, w.message);
-                    }
-                    if let Some(src) = &original {
-                        let serr = m1_fmt::syntax_error_count(src);
-                        if serr > 0 {
-                            eprintln!(
-                                "m1-fmt: {}: {serr} syntax error(s); left unchanged",
-                                path.display()
-                            );
-                            any_syntax_error = true;
-                        }
-                    }
-                    // The bare-stdout case must print unconditionally (mirroring
-                    // the stdin branch); gating it on `changed` truncated an
-                    // already-formatted file to empty (#59). `-i`/`--diff`/
-                    // `--check` stay gated on `changed`.
-                    if result.changed {
-                        any_changed = true;
-                        if args.check {
-                            eprintln!("{}: would reformat", path.display());
-                        } else if args.diff {
-                            let orig = original.as_deref().unwrap_or("");
-                            print_diff(&path.display().to_string(), orig, &result.output);
-                        } else if args.in_place {
-                            m1_workspace::atomic_write(path, result.output.as_bytes())
-                                .unwrap_or_else(|e| {
-                                    eprintln!("m1-fmt: {}: {}", path.display(), e);
-                                });
-                        } else {
-                            print!("{}", result.output);
-                        }
-                    } else if !args.check && !args.diff && !args.in_place {
-                        print!("{}", result.output);
-                    }
-                }
-                Err(m1_fmt::FormatError::SyntaxErrors(diags)) => {
-                    eprintln!(
-                        "m1-fmt: skipping {}: {} syntax error(s)",
-                        path.display(),
-                        diags.len()
-                    );
-                    // A skipped, unparseable file is not a clean success either.
-                    any_syntax_error = true;
-                }
-                Err(e) => {
-                    eprintln!("m1-fmt: {}: {}", path.display(), e);
-                    any_error = true;
-                }
+        }
+
+        // Formatting is CPU-bound (parse + print) and files are independent, so
+        // process them in parallel (#109). The loop body is share-nothing: it reads
+        // the file, formats it against the pre-resolved per-directory options, and
+        // returns a `FileOutcome` capturing everything to emit plus the three status
+        // flags. Output stays deterministic — outcomes are produced in an indexed
+        // Vec and replayed in input order below, never interleaved across files.
+        // In-place writes happen inside the closure; they are per-file independent
+        // and atomic via m1-workspace's `atomic_write`, so parallel `-i` is safe.
+        let outcomes: Vec<FileOutcome> = args
+            .files
+            .par_iter()
+            .map(|path| {
+                let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+                let opts = &opts_cache[dir];
+                process_file(path, opts, range, &args)
+            })
+            .collect();
+
+        // Replay in input order, aggregating status. stderr is emitted before
+        // stdout for each file, matching the serial loop's per-file ordering.
+        for outcome in outcomes {
+            any_changed |= outcome.changed;
+            any_error |= outcome.error;
+            any_syntax_error |= outcome.syntax_error;
+            if !outcome.stderr.is_empty() {
+                eprint!("{}", outcome.stderr);
+            }
+            if !outcome.stdout.is_empty() {
+                print!("{}", outcome.stdout);
             }
         }
     }

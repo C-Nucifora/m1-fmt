@@ -230,6 +230,46 @@ fn in_place_write_is_atomic_and_leaves_no_temp_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #113: a failed in-place write must fail the run. Regression: `-i` printed the
+/// I/O error to stderr but still exited 0, so a read-only file (or any write
+/// failure) was silently swallowed by CI and format-on-save. We force the failure
+/// by making the *containing directory* read-only — `atomic_write` writes a temp
+/// file in that directory and renames it over the target, so a non-writable dir
+/// makes the write fail deterministically. Unix-only: directory write permissions
+/// have no equivalent meaning on Windows.
+#[cfg(unix)]
+#[test]
+fn in_place_write_failure_exits_nonzero() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("m1fmt_ro_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("script.m1scr");
+    // Unformatted, so the file *would* be rewritten — exercising the write path.
+    std::fs::write(&path, "local x=1;\n").unwrap();
+
+    // Make the directory read-only so the atomic temp-file create/rename fails.
+    let original = std::fs::metadata(&dir).unwrap().permissions();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let (_, stderr, code) = run_with_file(&["-i", path.to_str().unwrap()]);
+
+    // Restore write permission before any assertion so cleanup always succeeds.
+    std::fs::set_permissions(&dir, original).unwrap();
+
+    assert_eq!(
+        code,
+        Some(1),
+        "a failed in-place write must exit 1, not 0 (#113); stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("script.m1scr"),
+        "the failing path must be reported on stderr; stderr: {stderr}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #67: the stdin path must decode non-UTF-8 (Windows-1252) bytes tolerantly,
 /// the same way the file path does, instead of panicking on the strict
 /// `read_to_string().unwrap()`. A `°` is the single CP1252 byte `0xB0`, which is
@@ -452,4 +492,57 @@ fn empty_directory_reports_and_fails() {
         stderr.contains("no .m1scr"),
         "empty directory must be reported. stderr: {stderr}"
     );
+}
+
+#[test]
+fn multi_file_diff_output_is_ordered_and_deterministic() {
+    // #109: files are formatted in parallel, but the captured per-file output must
+    // be replayed in input order and never interleaved. Run many files (more than
+    // the worker-thread count) several times and assert byte-identical, in-order
+    // output every run.
+    let dir = temp_tree("paralleldiff");
+    let mut paths = Vec::new();
+    for i in 0..12 {
+        let p = dir.join(format!("f{i:02}.m1scr"));
+        std::fs::write(&p, UNFORMATTED).unwrap();
+        paths.push(p.to_str().unwrap().to_string());
+    }
+    let mut args: Vec<&str> = vec!["--diff"];
+    args.extend(paths.iter().map(|s| s.as_str()));
+
+    let (first, _, code) = run_with_file(&args);
+    assert_eq!(code, Some(0), "--diff exits 0 even when files differ");
+    let first = String::from_utf8(first).unwrap();
+
+    // Each file's diff header names the file; the headers must appear in input
+    // order f00, f01, ... f11.
+    let order: Vec<usize> = first
+        .lines()
+        .filter_map(|l| l.strip_prefix("--- "))
+        // header is e.g. "--- /tmp/.../f03.m1scr (original)"; take the path word.
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter_map(|name| {
+            name.rsplit('/')
+                .next()
+                .and_then(|f| f.strip_prefix('f'))
+                .and_then(|f| f.strip_suffix(".m1scr"))
+                .and_then(|n| n.parse::<usize>().ok())
+        })
+        .collect();
+    assert_eq!(
+        order,
+        (0..12).collect::<Vec<_>>(),
+        "diff blocks must be emitted in input order; got {order:?}"
+    );
+
+    // Determinism: repeated runs produce identical output.
+    for _ in 0..4 {
+        let (again, _, _) = run_with_file(&args);
+        assert_eq!(
+            String::from_utf8(again).unwrap(),
+            first,
+            "parallel --diff output must be deterministic across runs"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
