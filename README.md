@@ -89,6 +89,7 @@ safety).
 
 ```sh
 m1-fmt <file.m1scr>                  # print formatted output to stdout
+m1-fmt --check .                     # check every .m1scr under a directory
 m1-fmt --max-blank-lines 1 <file>    # cap consecutive blank lines
 m1-fmt --range 10:14 <file>          # format only lines 10–14, leave the rest as-is
 ```
