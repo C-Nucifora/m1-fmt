@@ -2,40 +2,35 @@
 
 An auto-formatter (pretty-printer) for the MoTeC M1 script language (`.m1scr`).
 It reparses the formatted output to guarantee it never changes a script's
-meaning. It is both a **library** (consumed by `m1-lsp` for
-`textDocument/formatting`) and a **CLI**.
+meaning. It is both a **library** (consumed by `m1-lsp` for editor formatting)
+and a **CLI**.
 
-## Workspace layout
+## Install
 
-The M1 toolchain lives in **six separate repositories**. They are not published
-to crates.io; instead each crate pins its upstreams as **versioned git-tag Cargo
-dependencies** (e.g. `m1-core = { git = "…/m1-core.git", tag = "v0.3.1" }`), so
-this crate **does** build from a standalone clone — Cargo fetches its upstreams
-from their tagged releases. Checking the whole set out as siblings under one
-parent directory is handy for cross-repo work, but is not required to build:
+Prebuilt binaries for Linux, macOS, and Windows are attached to each
+[release](https://github.com/C-Nucifora/m1-fmt/releases). Or build from
+source:
 
-```
-<parent>/
-├── tree-sitter-m1/   # grammar (root)
-├── m1-core/          # parse / CST / diagnostics
-├── m1-lint/          # linter
-├── m1-fmt/           # this crate
-├── m1-typecheck/     # type checker
-└── m1-lsp/           # language server; depends on the four above
+```sh
+cargo install --git https://github.com/C-Nucifora/m1-fmt.git --tag <latest>
 ```
 
-**`m1-fmt` depends on `m1-core`** (a git-tag dep that transitively pulls in
-`tree-sitter-m1`), and is itself a git-tag dependency of `m1-lsp`. (The
-`m1-example` corpus project, used by the corpus test, is an optional sibling
-checkout.)
+## Usage
 
-Because every dependency is pinned by tag, the coupling **is** visible on
-GitHub — each `Cargo.toml` names its upstreams and their versions, and
-Dependabot opens bump PRs as new upstream tags ship. Cutting a new upstream
-release and bumping `tag = "vX.Y.Z"` in each consumer is what propagates a
-change across the stack.
+```sh
+m1-fmt file.m1scr            # print formatted output to stdout
+m1-fmt --check .             # CI mode: exit non-zero if anything would change
+m1-fmt -i src/               # format a directory in place
+m1-fmt --diff file.m1scr     # show what would change as a unified diff
+m1-fmt --range 10:14 file    # format only those lines, leave the rest untouched
+```
 
-## Guarantees (invariants)
+See `m1-fmt --help` for the full flag list. Directory runs are parallel by
+default (`--jobs` to control). A file with syntax errors is left byte-for-byte
+unchanged — formatting never corrupts unparseable input — and `--check`
+reports it and exits non-zero so CI doesn't mistake it for a clean file.
+
+## Guarantees
 
 Every format is verified to uphold three invariants — also exercised by a
 property-based fuzz suite:
@@ -43,90 +38,45 @@ property-based fuzz suite:
 1. **Idempotency** — formatting already-formatted output is a no-op.
 2. **Output reparses** — the result parses without new syntax errors.
 3. **Semantic-token preservation** — the sequence of meaningful tokens is
-   unchanged; only trivia (whitespace/layout) moves.
+   unchanged; only whitespace and layout move.
 
-If the input has syntax errors, `m1-fmt` returns it unchanged (pass-through
-safety).
+## Style and configuration
 
-## Formatting behavior
+The defaults follow the M1 Development Manual: **tab indentation and Allman
+braces**. Teams with a different house style can override in config — the
+manual is the default, deviation is a choice:
 
-- **Manual-correct style by default:** Allman braces (each brace on its own line)
-  and tab indentation, per the M1 Build Development Manual. Override in
-  `.m1fmt.toml` for a different house style:
-  ```toml
-  brace_style  = "allman"   # or "kr"
-  indent_style = "tab"      # or "spaces"
-  indent_width = 4          # columns per level (tab display width / space count)
-  ```
-- Consistent indentation, operator spacing, and brace/statement layout.
-- **Line-wrapping** at the width budget: argument lists (greedy fill, no trailing
-  comma), binary chains (break before operators), and `if` conditions, accounting
-  for trailing end-of-line comments, `;`, and `,`.
-- **`--max-blank-lines <n>`** collapses runs of blank lines and strips
-  brace-adjacent blanks; author blank lines are otherwise preserved.
-- **Blank line after `when` blocks** (manual p.65: "all functions and methods to
-  end with a blank line"): one blank is inserted after a top-level `when` block
-  when missing (never inside nested blocks, never at EOF).
-- **Opt-in `.m1fmt.toml` extras** (off by default — neither is a manual
-  mandate):
-  ```toml
-  align_assignments = true   # align `=` in runs of simple assignments
-  reflow_comments   = true   # split over-width `//` comments (never joins
-                             # short lines; never touches @m1: annotations)
-  ```
-- **Format-off regions** (`@m1:fmt`): the lines from a standalone
-  `// @m1:fmt(off)` comment through the next standalone `// @m1:fmt(on)`
-  (markers inclusive) pass through the formatter byte-for-byte — for
-  hand-aligned constant tables and other deliberate layout. An unclosed `off`
-  runs to end of file; a marker sharing a line with code is inert; `--range`
-  requests touching an off region are declined. Off-region lines are exempt
-  from line-too-long warnings.
-- **Range formatting** (`--range`, LSP `rangeFormatting`) snaps to the deepest
-  run of complete statements covering the request — formatting one line inside
-  a long `when` block reformats just that statement, re-indented in place.
-
-## CLI usage
-
-```sh
-m1-fmt <file.m1scr>                  # print formatted output to stdout
-m1-fmt --check .                     # check every .m1scr under a directory
-m1-fmt --max-blank-lines 1 <file>    # cap consecutive blank lines
-m1-fmt --range 10:14 <file>          # format only lines 10–14, leave the rest as-is
+```toml
+# .m1fmt.toml (or the [format] section of a workspace m1-tools.toml)
+indent_style = "tab"      # or "spaces"
+brace_style  = "allman"   # or "kr"
+line_width   = 88
 ```
 
-`--range START:END` (1-based, inclusive) formats only the top-level statements
-overlapping that line range and leaves every other line byte-for-byte unchanged;
-the range is snapped outward to whole statement boundaries. It composes with
-`--check`, `--in-place`, and `--diff`, and backs editor format-on-selection (the
-LSP calls the underlying `format_range` to build `textDocument/rangeFormatting`
-edits). Expression fragments aren't independently parseable, so a range that
-overlaps no complete statement is a no-op.
+Precedence: built-in defaults < `m1-tools.toml` `[format]` < `.m1fmt.toml` <
+CLI flags. The workspace-level `m1-tools.toml` is shared with `m1-lint`,
+`m1-lsp`, and the editor integrations — see the
+[m1-tools configuration docs](https://github.com/C-Nucifora/m1-tools#configuration)
+for the full set of knobs.
 
-A buffer with syntax errors is left byte-for-byte unchanged (formatting never
-corrupts unparseable input). In `--check` mode this is reported on stderr and
-exits non-zero, so CI doesn't mistake an unparseable file for a clean one.
+Beyond indentation and braces, the formatter handles operator spacing,
+line-wrapping at the width budget, and blank-line policy, with a few opt-in
+extras (assignment alignment, comment reflow). For hand-aligned tables and
+other deliberate layout, `// @m1:fmt(off)` / `// @m1:fmt(on)` comments mark a
+region the formatter passes through untouched.
 
-## Build & test
+## Development
 
-```sh
-cargo build --release      # binary at target/release/m1-fmt
-cargo test                 # unit + snapshot + corpus + proptest-invariant tests
-```
-
-The corpus test formats every `.m1scr` under `$M1_CORPUS_PATH` (falling back to
-the sibling `m1-example` example project), checking the invariants and that no
-breakable line exceeds the width budget; it is skipped if the directory is absent.
-
-## Note on examples
-
-Example identifiers in the docs and fixtures are **synthetic placeholders**, not
-drawn from any real project.
+The CI gate is `cargo test`, `cargo clippy --all-targets -- -D warnings`, and
+`cargo fmt --all -- --check`. The corpus test formats every `.m1scr` under
+`$M1_CORPUS_PATH` (falling back to a sibling `m1-example/` checkout) and
+checks the invariants; it skips if no corpus is present. Example identifiers
+in docs and fixtures are synthetic placeholders, not drawn from any real
+project.
 
 ## License
 
-Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later) — see [LICENSE](LICENSE).
-
-Copyright (C) 2026 The M1 Tools authors.
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 ## Trademark
 
