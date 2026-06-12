@@ -93,6 +93,9 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
         if let Some(b) = cfg.reflow_comments {
             o.reflow_comments = b;
         }
+        if let Some(b) = cfg.final_blank_line {
+            o.final_blank_line = b;
+        }
     }
 
     // Layer 3: explicit CLI flags win over everything.
@@ -138,6 +141,17 @@ mod resolve_tests {
         assert_eq!(o.continuation_indent, 3);
         assert!(o.align_assignments);
         assert!(o.reflow_comments);
+    }
+
+    #[test]
+    fn m1fmt_toml_drives_final_blank_line() {
+        // #116: settable from .m1fmt.toml; the unified [format] key follows
+        // with the m1-workspace bump that adds FormatSection::final_blank_line.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".m1fmt.toml"), "final_blank_line = true\n").unwrap();
+        let o = resolve_opts(CliOverrides::default(), tmp.path());
+        assert!(o.final_blank_line);
+        assert!(!m1_fmt::FormatOptions::default().final_blank_line, "opt-in");
     }
 
     #[test]

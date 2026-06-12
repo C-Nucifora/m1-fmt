@@ -41,6 +41,12 @@ pub struct FormatOptions {
     /// comment lines. Split-only — authored short lines are never joined, and
     /// `///`-doc / `@m1:` annotation lines are never touched.
     pub reflow_comments: bool,
+    /// Opt-in (#116): end the file with one blank line (`\n\n`) instead of a
+    /// bare newline — the formatter pair of m1-lint L027 (manual p.65, "all
+    /// functions and methods to end with a blank line", at file scope since an
+    /// `.m1scr` is a method body). Off by default: L027 itself is opt-in, and
+    /// the default output stays byte-for-byte unchanged.
+    pub final_blank_line: bool,
 }
 
 impl Default for FormatOptions {
@@ -54,6 +60,7 @@ impl Default for FormatOptions {
             continuation_indent: 1,
             align_assignments: false,
             reflow_comments: false,
+            final_blank_line: false,
         }
     }
 }

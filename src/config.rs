@@ -45,6 +45,8 @@ pub struct FileConfig {
     pub align_assignments: Option<bool>,
     /// Maps to `FormatOptions::reflow_comments` (opt-in, #95).
     pub reflow_comments: Option<bool>,
+    /// Maps to `FormatOptions::final_blank_line` (opt-in, #116).
+    pub final_blank_line: Option<bool>,
 }
 
 /// Parse a `.m1fmt.toml` body. Unknown keys are ignored; missing keys stay
@@ -78,6 +80,7 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
         continuation_indent: uint("continuation_indent"),
         align_assignments: value.get("align_assignments").and_then(|v| v.as_bool()),
         reflow_comments: value.get("reflow_comments").and_then(|v| v.as_bool()),
+        final_blank_line: value.get("final_blank_line").and_then(|v| v.as_bool()),
     })
 }
 
@@ -116,6 +119,14 @@ mod tests {
         let c = parse("max_line_length = 72\n").unwrap();
         assert_eq!(c.max_line_length, Some(72));
         assert_eq!(c.max_blank_lines, None);
+    }
+
+    #[test]
+    fn parses_final_blank_line() {
+        let c = parse("final_blank_line = true\n").unwrap();
+        assert_eq!(c.final_blank_line, Some(true));
+        let c = parse("max_line_length = 90\n").unwrap();
+        assert_eq!(c.final_blank_line, None);
     }
 
     #[test]

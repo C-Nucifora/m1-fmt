@@ -48,16 +48,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all -- --check
 
+  # The repo has no Lua left (the legacy Neovim shim was removed in #123), but
+  # "Lua Format" is still a required status check on main, which only an admin
+  # can retire. This placeholder keeps the context green until then.
   lua-fmt:
     name: Lua Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: JohnnyMorganz/stylua-action@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          version: latest
-          args: --check lua/ plugin/ editors/
+      - run: echo "no Lua in this repo (legacy shim removed)"
 
   audit:
     name: Security Audit
