@@ -65,6 +65,11 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
         if let Some(b) = f.reflow_comments {
             o.reflow_comments = b;
         }
+        // final_blank_line reached the unified [format] section in
+        // m1-workspace v0.10.0 (#116's L027-pairing knob).
+        if let Some(b) = f.final_blank_line {
+            o.final_blank_line = b;
+        }
     }
 
     // Layer 2: the tool-specific .m1fmt.toml overrides the unified file.
@@ -145,13 +150,22 @@ mod resolve_tests {
 
     #[test]
     fn m1fmt_toml_drives_final_blank_line() {
-        // #116: settable from .m1fmt.toml; the unified [format] key follows
-        // with the m1-workspace bump that adds FormatSection::final_blank_line.
+        // #116: settable from .m1fmt.toml AND the unified [format] section
+        // (FormatSection::final_blank_line, m1-workspace v0.10.0).
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(".m1fmt.toml"), "final_blank_line = true\n").unwrap();
         let o = resolve_opts(CliOverrides::default(), tmp.path());
         assert!(o.final_blank_line);
         assert!(!m1_fmt::FormatOptions::default().final_blank_line, "opt-in");
+
+        let tmp2 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp2.path().join("m1-tools.toml"),
+            "[format]\nfinal_blank_line = true\n",
+        )
+        .unwrap();
+        let o2 = resolve_opts(CliOverrides::default(), tmp2.path());
+        assert!(o2.final_blank_line, "unified [format] key drives it too");
     }
 
     #[test]
