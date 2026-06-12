@@ -257,6 +257,12 @@ fn process_file(
     out
 }
 
+/// "1 file" / "N files" — pluralize a file count for the `--check`/`-i`
+/// batch summary (#114).
+fn files(n: usize) -> String {
+    format!("{n} file{}", if n == 1 { "" } else { "s" })
+}
+
 fn main() {
     reset_sigpipe();
     let mut args = Args::parse();
@@ -438,16 +444,57 @@ fn main() {
 
         // Replay in input order, aggregating status. stderr is emitted before
         // stdout for each file, matching the serial loop's per-file ordering.
+        // Tally the per-file outcomes for the summary (#114); the three flags are
+        // mutually exclusive per file (a syntax-error or I/O-error file is never
+        // also counted as "changed").
+        let total = args.files.len();
+        let (mut n_changed, mut n_syntax, mut n_errored) = (0usize, 0usize, 0usize);
         for outcome in outcomes {
             any_changed |= outcome.changed;
             any_error |= outcome.error;
             any_syntax_error |= outcome.syntax_error;
+            if outcome.error {
+                n_errored += 1;
+            } else if outcome.syntax_error {
+                n_syntax += 1;
+            } else if outcome.changed {
+                n_changed += 1;
+            }
             if !outcome.stderr.is_empty() {
                 eprint!("{}", outcome.stderr);
             }
             if !outcome.stdout.is_empty() {
                 print!("{}", outcome.stdout);
             }
+        }
+
+        // One summary line after the per-file output, for corpus-sized runs
+        // (#114). Only in --check / -i (diff emits diffs; bare stdout is the
+        // formatted text itself) and only with more than one file — a lone
+        // file's own line already says everything. On stderr, so stdout piping
+        // is unaffected.
+        if total > 1 && (args.check || args.in_place) {
+            let unchanged = total - n_changed - n_syntax - n_errored;
+            let mut summary = if args.in_place {
+                format!(
+                    "reformatted {}, {} already formatted",
+                    files(n_changed),
+                    files(unchanged)
+                )
+            } else {
+                format!(
+                    "{} would be reformatted, {} already formatted",
+                    files(n_changed),
+                    files(unchanged)
+                )
+            };
+            if n_syntax > 0 {
+                summary.push_str(&format!(", {} skipped (syntax errors)", files(n_syntax)));
+            }
+            if n_errored > 0 {
+                summary.push_str(&format!(", {} errored", files(n_errored)));
+            }
+            eprintln!("{summary}");
         }
     }
 

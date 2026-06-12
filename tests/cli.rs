@@ -452,6 +452,59 @@ fn directory_argument_check_reports_each_file() {
 }
 
 #[test]
+fn check_prints_a_summary_count() {
+    // #114: --check ends with one stderr summary line counting the outcomes, so
+    // a corpus-sized run is not just a wall of per-file lines with no total.
+    let dir = temp_tree("checksummary");
+    std::fs::write(dir.join("a.m1scr"), UNFORMATTED).unwrap();
+    std::fs::write(dir.join("sub").join("b.m1scr"), CANONICAL).unwrap();
+
+    let (_, stderr, code) = run_with_file(&["--check", dir.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("1 file would be reformatted"),
+        "summary must count files that would reformat. stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("1 file already formatted"),
+        "summary must count files left unchanged. stderr: {stderr}"
+    );
+}
+
+#[test]
+fn in_place_prints_a_reformatted_summary() {
+    // #114: -i prints a summary of how many files it actually rewrote.
+    let dir = temp_tree("isummary");
+    std::fs::write(dir.join("a.m1scr"), UNFORMATTED).unwrap();
+    std::fs::write(dir.join("sub").join("b.m1scr"), CANONICAL).unwrap();
+
+    let (_, stderr, code) = run_with_file(&["-i", dir.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert!(
+        stderr.contains("reformatted 1 file"),
+        "in-place summary must report the reformatted count. stderr: {stderr}"
+    );
+}
+
+#[test]
+fn single_file_check_prints_no_summary() {
+    // The summary is for corpus/multi-file runs; a single file's own line is
+    // enough, so don't tack a redundant "1 file would be reformatted" onto it.
+    let dir = temp_tree("nosummary");
+    let f = dir.join("a.m1scr");
+    std::fs::write(&f, UNFORMATTED).unwrap();
+    let (_, stderr, code) = run_with_file(&["--check", f.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("would be reformatted"),
+        "single-file --check must not print the batch summary. stderr: {stderr}"
+    );
+}
+
+#[test]
 fn directory_argument_requires_an_output_mode() {
     // Bare-stdout mode would concatenate a whole tree to stdout — almost
     // certainly a mistake. Directories require -i, --check, or --diff.
