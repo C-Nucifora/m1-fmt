@@ -53,6 +53,18 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
         {
             o.brace_style = s;
         }
+        // The continuation/align/reflow knobs reached the unified [format]
+        // section in m1-workspace v0.9.0 (#25); previously they were
+        // .m1fmt.toml-only, so a unified-config-only team couldn't set them.
+        if let Some(n) = f.continuation_indent {
+            o.continuation_indent = n;
+        }
+        if let Some(b) = f.align_assignments {
+            o.align_assignments = b;
+        }
+        if let Some(b) = f.reflow_comments {
+            o.reflow_comments = b;
+        }
     }
 
     // Layer 2: the tool-specific .m1fmt.toml overrides the unified file.
@@ -110,6 +122,22 @@ mod resolve_tests {
         assert_eq!(o.indent_style, m1_fmt::IndentStyle::Spaces);
         assert_eq!(o.indent_width, 2);
         assert_eq!(o.line_width, 100);
+    }
+
+    #[test]
+    fn unified_tools_toml_drives_continuation_align_reflow() {
+        // #25 cascade: the continuation/align/reflow knobs are settable from the
+        // unified m1-tools.toml [format] section now, not just .m1fmt.toml.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\ncontinuation_indent = 3\nalign_assignments = true\nreflow_comments = true\n",
+        )
+        .unwrap();
+        let o = resolve_opts(CliOverrides::default(), tmp.path());
+        assert_eq!(o.continuation_indent, 3);
+        assert!(o.align_assignments);
+        assert!(o.reflow_comments);
     }
 
     #[test]
