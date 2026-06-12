@@ -55,7 +55,7 @@ jobs:
     name: Lua Format
     runs-on: ubuntu-latest
     steps:
-      - run: echo "no Lua in this repo (legacy shim removed in #123)"
+      - run: echo "no Lua in this repo (legacy shim removed)"
 
   audit:
     name: Security Audit
