@@ -41,8 +41,10 @@ pub(super) fn strip_brace_adjacent_blanks(output: &mut String) {
     *output = result;
 }
 
-/// Ensure exactly one final newline and collapse blank runs to `max_blank`.
-pub(super) fn normalize_trailing(output: &mut String, max_blank: usize) {
+/// Collapse blank runs to `max_blank` and normalize the file end: exactly one
+/// final newline, or — with `final_blank_line` (#116, the m1-lint L027 pair) —
+/// exactly one final *blank line* (`\n\n`). Empty output stays empty either way.
+pub(super) fn normalize_trailing(output: &mut String, max_blank: usize, final_blank_line: bool) {
     collapse_blank_lines(output, max_blank);
     while output.ends_with("\n\n") {
         output.pop();
@@ -51,6 +53,9 @@ pub(super) fn normalize_trailing(output: &mut String, max_blank: usize) {
         return;
     }
     if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    if final_blank_line {
         output.push('\n');
     }
 }

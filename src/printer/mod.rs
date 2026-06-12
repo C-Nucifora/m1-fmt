@@ -130,7 +130,7 @@ pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
     // Manual p.65 (#97): a top-level when block ends with a blank line. Runs
     // before the trailing normalization so a blank inserted at EOF is trimmed.
     normalize::ensure_blank_after_top_level_when(&mut p.output);
-    normalize::normalize_trailing(&mut p.output, opts.max_blank_lines);
+    normalize::normalize_trailing(&mut p.output, opts.max_blank_lines, opts.final_blank_line);
     if opts.reflow_comments {
         normalize::reflow_long_line_comments(&mut p.output, opts.line_width);
     }
