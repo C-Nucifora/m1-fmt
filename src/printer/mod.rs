@@ -93,6 +93,19 @@ fn op_prec(op: &str) -> u8 {
     }
 }
 
+/// A `BinaryExpression` with fewer than three non-comment children — i.e. not a
+/// complete `left operator right`. The parser pads recovered binaries to three
+/// or more children, so this is unreachable today; it guards the wrapped
+/// formatting path against a future ungated entry or grammar change rather than
+/// panicking (#130).
+fn is_degenerate_binary(node: Node) -> bool {
+    node.children()
+        .into_iter()
+        .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
+        .count()
+        < 3
+}
+
 /// Precedence of a `BinaryExpression` node's operator (its middle child).
 fn binary_op_prec(node: Node) -> u8 {
     let op = node
@@ -243,5 +256,44 @@ mod wrap_tests {
         let again = crate::format_str(&out).unwrap();
         assert_eq!(again.output, out, "formatting is not idempotent");
         assert!(!again.changed);
+    }
+
+    fn first_binary(n: Node) -> Option<Node> {
+        if n.kind() == Kind::BinaryExpression {
+            return Some(n);
+        }
+        n.children().into_iter().find_map(first_binary)
+    }
+
+    // #130: the wrapped path (`flatten_binary`) indexed parts[0..2] assuming a
+    // BinaryExpression always has exactly three non-comment children. The CLI
+    // never reaches it (it leaves syntactically-invalid input unchanged), but an
+    // ungated entry formatting an error-recovered tree would. Error recovery
+    // produces binaries with three OR MORE children (a naive
+    // `debug_assert_eq!(len, 3)` would itself panic on the 4-child shape), so the
+    // guard must tolerate >=3 and bail below 3. Drive the ungated wrapped path on
+    // recovered binaries and assert it neither panics nor drops the operands.
+    #[test]
+    fn wrapped_path_survives_recovered_binaries() {
+        let long = "a".repeat(60);
+        let other = "b".repeat(60);
+        for src in [
+            format!("x = {long} + ;\n"), // recovers to 3 children (right is error)
+            format!("x = {long} +++ {other};\n"), // recovers to 4 children
+            format!("x = {long} + {other} and;\n"), // chained + trailing dangling op
+        ] {
+            let cst = m1_core::parse(&src);
+            let node = first_binary(cst.root())
+                .unwrap_or_else(|| panic!("no BinaryExpression recovered from {src:?}"));
+            let mut p = Printer::new(&cst, &crate::FormatOptions::default());
+            // Ungated: emit the binary directly. Its flat form is well over the
+            // 88-col budget, so this takes the wrapped path through flatten_binary.
+            p.emit_binary(node);
+            assert!(
+                p.output.contains(&long),
+                "wrapped output dropped the operand for {src:?}: {:?}",
+                p.output
+            );
+        }
     }
 }
