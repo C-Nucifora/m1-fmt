@@ -4,7 +4,7 @@
 //! argument lists, unary, binary chains (with precedence-aware flattening),
 //! ternaries and parenthesized expressions.
 
-use super::{Printer, binary_op_prec, op_prec};
+use super::{Printer, binary_op_prec, is_degenerate_binary, op_prec};
 use m1_core::{Kind, Node};
 
 impl Printer {
@@ -241,7 +241,13 @@ impl Printer {
     pub(super) fn emit_binary(&mut self, node: Node) {
         let start_col = self.current_col();
         let flat = self.flat_of(node, |p| p.emit_binary_flat(node));
-        if self.exceeds_limit(start_col, &flat) {
+        // Only the wrapped path assumes a well-formed [left, op, right]. A
+        // malformed/partial binary (fewer than three non-comment children) must
+        // stay flat — `emit_binary_flat` just iterates children and is safe,
+        // whereas `flatten_binary` would index out of bounds (#130). This also
+        // keeps such a node off the wrapped path entirely, so it can never
+        // re-enter and recurse.
+        if self.exceeds_limit(start_col, &flat) && !is_degenerate_binary(node) {
             self.emit_binary_wrapped(node);
         } else {
             self.emit(&flat);
@@ -279,7 +285,20 @@ impl Printer {
             .into_iter()
             .filter(|c| !matches!(c.kind(), Kind::LineComment | Kind::BlockComment))
             .collect();
-        // parts == [left, operator, right]
+        // A well-formed BinaryExpression has at least three non-comment children
+        // (left, operator, right; error recovery can add more). Fewer than three
+        // means a malformed/partial node — not reachable through the CLI, which
+        // gates formatting behind a syntax-error check, but reachable from a
+        // future ungated entry (range-format/LSP) or a grammar change. Indexing
+        // parts[0..2] would panic; bail instead, treating the node as a single
+        // opaque operand so the caller emits its text unchanged (#130).
+        if parts.len() < 3 {
+            if first.is_none() {
+                *first = Some(node);
+            }
+            return;
+        }
+        // parts == [left, operator, right, ..]
         let left = parts[0];
         let op = parts[1];
         let right = parts[2];
