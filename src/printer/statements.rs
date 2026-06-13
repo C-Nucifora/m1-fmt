@@ -87,6 +87,13 @@ impl Printer {
     pub(super) fn print_local_decl(&mut self, node: Node) {
         // Children in order: optional `static`, `local`, optional
         // type_annotation, name, optional (`=` value), `;`.
+        //
+        // A bare-identifier initializer (`local a = b;`) has the same
+        // `Kind::Identifier` as the declared name, so we cannot disambiguate on
+        // kind alone: route everything after `=` through `emit_expr` (which
+        // already supplies its own spacing) and reserve the `Identifier` arm for
+        // the declared name only (#125).
+        let mut seen_assign = false;
         for child in node.children() {
             match child.kind() {
                 Kind::Static => {
@@ -99,18 +106,20 @@ impl Printer {
                     self.emit(" ");
                     self.print_type_annotation(child);
                 }
-                Kind::Identifier => {
+                Kind::Identifier if !seen_assign => {
                     self.emit(" ");
                     self.emit(child.text());
                 }
                 Kind::Assign => {
                     self.emit(" = ");
+                    seen_assign = true;
                 }
                 Kind::Semicolon => {
                     self.emit(";");
                 }
                 Kind::LineComment | Kind::BlockComment => {}
-                // The value expression (any expression kind).
+                // The value expression (any expression kind, including a bare
+                // identifier once we are past the `=`).
                 _ => {
                     self.emit_expr(child);
                 }
@@ -131,6 +140,7 @@ impl Printer {
 
     pub(super) fn print_assignment(&mut self, node: Node) {
         // target operator value ;
+        let mut seen_op = false;
         for child in node.children() {
             match child.kind() {
                 // Plain `=` plus the compound assignments (`+=`, `<<=`, …). The
@@ -140,18 +150,66 @@ impl Printer {
                 Kind::Assign => {
                     self.emit(" ");
                     self.emit(child.text());
-                    self.emit(" ");
+                    seen_op = true;
                 }
                 k if m1_core::is_compound_assign(k) => {
                     self.emit(" ");
                     self.emit(child.text());
-                    self.emit(" ");
+                    seen_op = true;
                 }
                 Kind::Semicolon => self.emit(";"),
                 Kind::LineComment | Kind::BlockComment => {}
+                // The value expression (the first expression child after the
+                // operator). If it cannot fit even after its own internal
+                // wrapping, break after `=` and emit it on a tab-indented
+                // continuation line as a last resort (#127).
+                _ if seen_op => {
+                    self.emit_rhs_with_last_resort_break(child);
+                    seen_op = false;
+                }
                 _ => self.emit_expr(child),
             }
         }
+    }
+
+    /// Emit an assignment's right-hand side. The caller has emitted the operator
+    /// (`=`, `+=`, …) with no trailing space; this method supplies the separator
+    /// — normally a single space, but a newline + continuation indent as a last
+    /// resort when the RHS would otherwise overflow `line_width` and has no
+    /// internal break point of its own to relieve it (#127).
+    ///
+    /// The break only fires when (a) emitting the RHS inline — *after* its own
+    /// wrapping has been given a chance — still overruns the budget, and (b) the
+    /// continuation column is strictly left of where the inline RHS would start,
+    /// so the move can actually help. This keeps it a genuine last resort:
+    /// assignments whose RHS wraps internally (long call args, binary chains) are
+    /// untouched.
+    fn emit_rhs_with_last_resort_break(&mut self, rhs: Node) {
+        let op_col = self.current_col(); // column right after the operator
+        let inline_col = op_col + 1; // adds the " " separator
+        let cont_col = (self.indent + self.continuation_indent) * self.indent_width;
+        // The break is only worthwhile when (a) the continuation column is left
+        // of where the RHS would sit inline, and (b) the operator line itself
+        // (`LHS =`) already fits — otherwise moving the RHS down leaves the first
+        // line over budget and the break is futile (the unbreakable-atom case).
+        if cont_col < inline_col && op_col <= self.width {
+            // Trial-render the RHS inline; if its widest line still exceeds the
+            // budget, an internal break point (if any) did not save it, so break
+            // after the operator instead. The trial begins with the separating
+            // space, so it is measured from the operator's column.
+            let inline = self.trial(|p| {
+                p.emit(" ");
+                p.emit_expr(rhs);
+            });
+            if self.exceeds_limit(op_col, &inline) {
+                self.emit_newline();
+                self.emit_continuation_indent();
+                self.emit_expr(rhs);
+                return;
+            }
+        }
+        self.emit(" ");
+        self.emit_expr(rhs);
     }
 
     pub(super) fn print_expression_stmt(&mut self, node: Node) {

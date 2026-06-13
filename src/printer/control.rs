@@ -143,13 +143,38 @@ impl Printer {
     pub(super) fn print_else_clause(&mut self, node: Node) {
         // `else` (if_statement | block). Allman puts `else` on its own line
         // after the closing brace; K&R keeps `} else` together.
-        match self.brace_style {
-            crate::BraceStyle::Allman => {
-                self.emit_newline();
-                self.emit_indent();
-                self.emit("else");
+        //
+        // An own-line comment that sits *before* the `else` keyword must stay
+        // before it — not be relocated below the keyword when `print_block`
+        // later flushes pending trivia ahead of the opening brace (#126). Flush
+        // any such leading trivia first, on its own line at the block indent,
+        // and detach `else` from the preceding `}` so the comment is not glued
+        // onto the brace line.
+        let else_start = self
+            .find_child_of_kind(node, Kind::Else)
+            .map(|c| c.byte_range().start)
+            .unwrap_or_else(|| node.byte_range().start);
+        let has_leading_comment = self
+            .trivia
+            .front()
+            .is_some_and(|t| t.byte_offset < else_start);
+        if has_leading_comment {
+            self.emit_newline();
+            if let Some(first) = self.trivia.front() {
+                self.prev_end_line = Some(first.source_line);
             }
-            crate::BraceStyle::Kr => self.emit(" else"),
+            self.flush_trivia_before(else_start);
+            self.emit_indent();
+            self.emit("else");
+        } else {
+            match self.brace_style {
+                crate::BraceStyle::Allman => {
+                    self.emit_newline();
+                    self.emit_indent();
+                    self.emit("else");
+                }
+                crate::BraceStyle::Kr => self.emit(" else"),
+            }
         }
         for child in node.children() {
             match child.kind() {
