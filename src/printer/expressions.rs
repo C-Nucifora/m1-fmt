@@ -66,7 +66,7 @@ impl Printer {
                         // is a word operator requiring a trailing space, while
                         // `~`/`-`/`!` bind tight. Folding them under one arm would
                         // change output, so the kinds are matched explicitly.
-                        Kind::Minus | Kind::Bang => self.emit(child.text()),
+                        Kind::Minus | Kind::Bang | Kind::Tilde => self.emit(child.text()),
                         Kind::Not => self.emit("not "),
                         Kind::LineComment | Kind::BlockComment => {}
                         _ => self.emit_expr_flat(child),
@@ -226,11 +226,11 @@ impl Printer {
         //
         // NOTE: deliberately NOT `m1_core::is_unary_op` here either — same reason
         // as the flat path above: that predicate lumps in `Kind::Tilde` and
-        // `Kind::Not`, but `not` needs a trailing space and `~` is not currently
-        // special-cased, so each operator kind is matched on its own.
+        // `Kind::Not`, but `not` needs a trailing space while `~`/`-`/`!` bind
+        // tight to their operand, so each operator kind is matched on its own.
         for child in node.children() {
             match child.kind() {
-                Kind::Minus | Kind::Bang => self.emit(child.text()),
+                Kind::Minus | Kind::Bang | Kind::Tilde => self.emit(child.text()),
                 Kind::Not => self.emit("not "),
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => self.emit_expr(child),

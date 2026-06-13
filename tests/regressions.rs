@@ -3,6 +3,7 @@
 //! - #125: a bare-identifier `local` initializer must not gain a double space.
 //! - #126: an own-line comment before `else`/`else if` must stay above it.
 //! - #127: a long assignment with no internal break point must break after `=`.
+//! - tilde: `~expr` (bitwise NOT) formats correctly and idempotently.
 
 use m1_fmt::{FormatOptions, format_str, format_str_with};
 
@@ -86,4 +87,51 @@ fn long_assignment_without_break_point_breaks_after_equals() {
 fn short_assignment_is_not_broken() {
     let out = fmt("x = some.call();\n");
     assert_eq!(out, "x = some.call();\n", "got:\n{out}");
+}
+
+// ---- Tilde (bitwise NOT) coverage -----------------------------------------
+//
+// `Kind::Tilde` is covered by `m1_core::is_unary_op` but `emit_unary` and
+// `emit_expr_flat` previously matched only `Kind::Minus` and `Kind::Bang`
+// explicitly, leaving `~` to fall through to `emit_verbatim`. The verbatim
+// path happened to produce correct output, but there were no tests and no
+// explicit arm. A `Kind::Tilde` arm matching `Kind::Minus` (tight-binding,
+// no trailing space) is now explicit. Tests added for coverage and stability.
+
+/// `~expr` formats with `~` tight against the operand, identical to `-` and `!`.
+#[test]
+fn tilde_unary_formats_correctly() {
+    let out = fmt("x = ~a;\n");
+    assert_eq!(out, "x = ~a;\n", "got:\n{out}");
+}
+
+/// `~expr` is idempotent: formatting twice changes nothing.
+#[test]
+fn tilde_unary_is_idempotent() {
+    let out = fmt("x = ~a;\n");
+    assert_eq!(fmt(&out), out, "not idempotent");
+}
+
+/// `~` applied to a member expression keeps the operand intact.
+#[test]
+fn tilde_member_expression_formats_correctly() {
+    let out = fmt("x = ~foo.bar;\n");
+    assert_eq!(out, "x = ~foo.bar;\n", "got:\n{out}");
+    assert_eq!(fmt(&out), out, "not idempotent");
+}
+
+/// `~` applied to a parenthesized expression.
+#[test]
+fn tilde_paren_expression_formats_correctly() {
+    let out = fmt("x = ~(a + b);\n");
+    assert_eq!(out, "x = ~(a + b);\n", "got:\n{out}");
+    assert_eq!(fmt(&out), out, "not idempotent");
+}
+
+/// `~` as the inner operand of a binary expression.
+#[test]
+fn tilde_inside_binary_expression_formats_correctly() {
+    let out = fmt("x = a & ~b;\n");
+    assert_eq!(out, "x = a & ~b;\n", "got:\n{out}");
+    assert_eq!(fmt(&out), out, "not idempotent");
 }
