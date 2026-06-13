@@ -47,11 +47,15 @@ braces**. Teams with a different house style can override in config — the
 manual is the default, deviation is a choice:
 
 ```toml
-# .m1fmt.toml (or the [format] section of a workspace m1-tools.toml)
-indent_style = "tab"      # or "spaces"
-brace_style  = "allman"   # or "kr"
-line_width   = 88
+# .m1fmt.toml
+indent_style     = "tab"    # or "spaces"
+brace_style      = "allman" # or "kr"
+max_line_length  = 88
 ```
+
+The unified workspace config (`m1-tools.toml [format]`) uses `line_width` instead of
+`max_line_length`; `.m1fmt.toml` always uses `max_line_length`. Unknown keys are
+silently ignored, so a mismatched key name is never an error — it just has no effect.
 
 Precedence: built-in defaults < `m1-tools.toml` `[format]` < `.m1fmt.toml` <
 CLI flags. The workspace-level `m1-tools.toml` is shared with `m1-lint`,
