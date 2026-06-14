@@ -1,6 +1,6 @@
 [package]
 name = "m1-fmt"
-version = "0.15.0"
+version = "0.15.1"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -15,7 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 m1-core = { git = "https://github.com/C-Nucifora/m1-core.git", tag = "v0.12.0" }
-m1-workspace = { git = "https://github.com/nedlane/m1-workspace.git", tag = "v0.10.0" }
+m1-workspace = { git = "https://github.com/nedlane/m1-workspace.git", tag = "v0.11.0" }
 clap = { version = "4", features = ["derive"] }
 toml = "1.1"
 rayon = "1"
