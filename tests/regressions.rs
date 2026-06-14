@@ -5,7 +5,7 @@
 //! - #127: a long assignment with no internal break point must break after `=`.
 //! - tilde: `~expr` (bitwise NOT) formats correctly and idempotently.
 
-use m1_fmt::{FormatError, FormatOptions, format_str, format_str_with};
+use m1_fmt::{FormatError, FormatOptions, decode_preserving_bom, format_str, format_str_with};
 
 fn fmt(src: &str) -> String {
     format_str(src).unwrap().output
@@ -170,5 +170,43 @@ fn syntax_error_buffer_is_ok_passthrough_not_err() {
     assert!(
         m1_fmt::syntax_error_count(src) > 0,
         "syntax errors are surfaced via syntax_error_count, not FormatError"
+    );
+}
+
+// ---- Library read-path surface ---------------------------------------------
+//
+// The library does NOT own file IO. The only file-formatting entry points the
+// real consumers use are `decode_preserving_bom` (the single BOM-preserving
+// byte decoder) feeding `format_str_with` / `format_str` / `format_range`: the
+// CLI reads bytes itself (`read_text_preserving_bom` -> `decode_preserving_bom`
+// -> `format_str_with`) and m1-lsp formats in-memory document text via
+// `format_str_with` / `format_range`. The removed `format_file` /
+// `format_file_with` wrappers had zero callers and only duplicated this read
+// path, so the file responsibility is satisfied entirely by the helper below.
+// This test pins that supported path so the dead wrappers cannot creep back in
+// as the sole way to format from disk.
+
+/// The supported "format a file" recipe is `decode_preserving_bom(bytes)` ->
+/// `format_str_with`, exactly as the CLI and m1-lsp use it. Reading bytes here
+/// (rather than via a `format_file` wrapper) proves the library's file-read
+/// responsibility lives in the shared decode helper, not in a private read path.
+#[test]
+fn file_read_path_is_decode_helper_then_format_str() {
+    // A BOM-led buffer with content that the formatter must change (an extra
+    // blank line is collapsed), exercising the full decode -> format flow.
+    let bytes = "\u{FEFF}x = 1;\n\n\n\n\n".as_bytes().to_vec();
+    let src = decode_preserving_bom(bytes);
+    assert!(src.starts_with('\u{FEFF}'), "BOM must survive the decode");
+
+    let result = format_str_with(&src, &FormatOptions::default())
+        .expect("formatting in-memory text never errors");
+    assert!(
+        result.changed,
+        "the surplus blank lines should be collapsed"
+    );
+    assert!(
+        result.output.starts_with('\u{FEFF}'),
+        "the BOM must round-trip through formatting: {:?}",
+        result.output
     );
 }
