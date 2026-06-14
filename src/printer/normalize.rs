@@ -5,11 +5,54 @@
 //! strip brace-adjacent blank lines, collapse blank runs, and normalize the
 //! trailing newline. Invoked by [`super::print_with`].
 
+/// Return the portion of `line` that is *code* — i.e. with `//` line comments
+/// and `"..."` string literals removed — so that brace counting and
+/// opener/closer detection only ever see real block delimiters. Braces that
+/// appear inside a comment or a string literal are not block structure and must
+/// not affect depth accounting (corpus: commented-out code with bare `//{` /
+/// `//}` lines and unbalanced braces in strings).
+fn code_only(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            if c == '\\' {
+                // Skip the escaped character verbatim.
+                chars.next();
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '/' if chars.peek() == Some(&'/') => break, // `//` line comment
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Count code-only `{` and `}` on a line (comments and strings excluded).
+fn code_braces(line: &str) -> (i32, i32) {
+    let code = code_only(line);
+    (
+        code.matches('{').count() as i32,
+        code.matches('}').count() as i32,
+    )
+}
+
 pub(super) fn strip_brace_adjacent_blanks(output: &mut String) {
     let lines: Vec<&str> = output.split_inclusive('\n').collect();
     let is_blank = |s: &str| s.strip_suffix('\n').unwrap_or(s).trim().is_empty();
-    fn trimmed_end(s: &str) -> &str {
-        s.strip_suffix('\n').unwrap_or(s).trim_end()
+    // Opener/closer detection runs on the code-only portion of the line so a
+    // brace inside a `//` comment or a string literal is never mistaken for a
+    // block delimiter.
+    fn code_trimmed_end(s: &str) -> String {
+        code_only(s.strip_suffix('\n').unwrap_or(s))
+            .trim_end()
+            .to_string()
     }
     let mut keep = vec![true; lines.len()];
 
@@ -22,13 +65,14 @@ pub(super) fn strip_brace_adjacent_blanks(output: &mut String) {
         let next_nonblank = (i + 1..lines.len()).find(|&j| !is_blank(lines[j]));
         match prev_nonblank {
             None => keep[i] = false, // leading run
-            Some(p) if trimmed_end(lines[p]).ends_with('{') => keep[i] = false,
+            Some(p) if code_trimmed_end(lines[p]).ends_with('{') => keep[i] = false,
             _ => {}
         }
-        if let Some(n) = next_nonblank
-            && (trimmed_end(lines[n]) == "}" || trimmed_end(lines[n]).starts_with('}'))
-        {
-            keep[i] = false;
+        if let Some(n) = next_nonblank {
+            let code = code_trimmed_end(lines[n]);
+            if code == "}" || code.starts_with('}') {
+                keep[i] = false;
+            }
         }
     }
 
@@ -97,8 +141,7 @@ pub(super) fn ensure_blank_after_top_level_when(output: &mut String) {
         if depth == 0 && (content.starts_with("when (") || content.starts_with("when(")) {
             in_top_when = true;
         }
-        let opens = content.matches('{').count() as i32;
-        let closes = content.matches('}').count() as i32;
+        let (opens, closes) = code_braces(content);
         let before = depth;
         depth += opens - closes;
         if in_top_when && before > 0 && depth == 0 {

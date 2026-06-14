@@ -61,6 +61,69 @@ fn blank_after_when_in_kr_style() {
     assert!(out.contains("}\n\ny = 2;"), "K&R too:\n{out}");
 }
 
+// ---- brace counting ignores comment/string context (regression) -----------
+// The blank-line normalize passes count `{`/`}` to track block depth. Braces
+// that appear inside `//` comments or string literals are not code and must be
+// excluded, or the depth accounting drifts and blank lines land in the wrong
+// place (corpus: CAN.Tertiary Transcieve 200Hz.m1scr SBG section).
+
+#[test]
+fn stray_close_brace_in_comment_does_not_split_when_block() {
+    // A `}` inside a comment inside a top-level when block must NOT make the
+    // depth hit 0 early and insert a spurious blank line inside the block.
+    let src = "when (Mode)\n{\n\tis (Off)\n\t{\n\t\t// disabled: extra closing }\n\t\tx = 1;\n\t}\n}\ny = 2;\n";
+    let out = idempotent(src, &FormatOptions::default());
+    assert!(
+        !out.contains("\t}\n\n}"),
+        "spurious blank inserted inside when block:\n{out}"
+    );
+    // The blank belongs AFTER the when block.
+    assert!(
+        out.contains("}\n\ny = 2;"),
+        "blank line missing after when block:\n{out}"
+    );
+}
+
+#[test]
+fn stray_open_brace_in_comment_still_gets_blank_after_when() {
+    // A `{` inside a comment must NOT inflate depth and suppress the required
+    // blank after the top-level when block.
+    let src = "when (Mode)\n{\n\tis (Off)\n\t{\n\t\t// opening brace { mentioned\n\t\tx = 1;\n\t}\n}\ny = 2;\n";
+    let out = idempotent(src, &FormatOptions::default());
+    assert!(
+        out.contains("}\n\ny = 2;"),
+        "blank line missing after when block:\n{out}"
+    );
+}
+
+#[test]
+fn brace_in_string_literal_does_not_corrupt_depth() {
+    // An UNBALANCED brace inside a string literal is not a block delimiter and
+    // must not throw off the depth accounting.
+    let src = "when (Mode)\n{\n\tis (Off)\n\t{\n\t\tName = \"close } here\";\n\t}\n}\ny = 2;\n";
+    let out = idempotent(src, &FormatOptions::default());
+    assert!(
+        !out.contains("\t}\n\n}"),
+        "spurious blank inserted inside when block:\n{out}"
+    );
+    assert!(
+        out.contains("}\n\ny = 2;"),
+        "blank line missing after when block:\n{out}"
+    );
+}
+
+#[test]
+fn comment_ending_in_brace_is_not_a_block_opener() {
+    // strip_brace_adjacent_blanks must not treat a comment whose text ends in
+    // `{` as a block opener and delete the author's following blank line.
+    let src = "x = 1;\n// some comment ending in a brace {\n\ny = 2;\n";
+    let out = idempotent(src, &FormatOptions::default());
+    assert!(
+        out.contains("brace {\n\ny = 2;"),
+        "author blank after comment was deleted:\n{out}"
+    );
+}
+
 // ---- #96 align_assignments (opt-in) ----------------------------------------
 
 fn align_opts() -> FormatOptions {
