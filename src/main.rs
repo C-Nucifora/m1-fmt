@@ -239,17 +239,10 @@ fn process_file(
                 out.stdout.push_str(&result.output);
             }
         }
-        Err(m1_fmt::FormatError::SyntaxErrors(diags)) => {
-            let _ = writeln!(
-                out.stderr,
-                "m1-fmt: skipping {}: {} syntax error(s)",
-                path.display(),
-                diags.len()
-            );
-            // A skipped, unparseable file is not a clean success either.
-            out.syntax_error = true;
-        }
         Err(e) => {
+            // The only error `format_buffer` produces is a file-read I/O error;
+            // a syntax-error buffer is the data-preserving `Ok` passthrough above
+            // (reported via the separate `syntax_error_count` pass).
             let _ = writeln!(out.stderr, "m1-fmt: {}: {}", path.display(), e);
             out.error = true;
         }

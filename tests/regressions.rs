@@ -5,7 +5,7 @@
 //! - #127: a long assignment with no internal break point must break after `=`.
 //! - tilde: `~expr` (bitwise NOT) formats correctly and idempotently.
 
-use m1_fmt::{FormatOptions, format_str, format_str_with};
+use m1_fmt::{FormatError, FormatOptions, format_str, format_str_with};
 
 fn fmt(src: &str) -> String {
     format_str(src).unwrap().output
@@ -134,4 +134,41 @@ fn tilde_inside_binary_expression_formats_correctly() {
     let out = fmt("x = a & ~b;\n");
     assert_eq!(out, "x = a & ~b;\n", "got:\n{out}");
     assert_eq!(fmt(&out), out, "not idempotent");
+}
+
+// ---- FormatError surface ---------------------------------------------------
+//
+// `FormatError` is the formatter's only error type. Syntax errors are NOT an
+// error: an unparseable buffer is returned as `Ok(FormatResult { changed:
+// false, .. })` (data-preserving passthrough) and surfaced separately via
+// `syntax_error_count`. The only `Err` the library ever produces is
+// `FormatError::IoError` (a failed file read). This test pins that surface so
+// a never-constructed `SyntaxErrors`-style variant cannot creep back in: it is
+// an *exhaustive* match with a single arm, which fails to compile if any other
+// variant exists.
+
+/// `FormatError` exposes exactly one variant — `IoError`. An exhaustive match
+/// over it must compile with that single arm; any extra variant breaks it.
+#[test]
+fn format_error_has_only_io_error_variant() {
+    let err = FormatError::IoError(std::io::Error::other("boom"));
+    match err {
+        FormatError::IoError(e) => assert_eq!(e.kind(), std::io::ErrorKind::Other),
+    }
+}
+
+/// A syntax-error buffer is the data-preserving passthrough, not an `Err`: the
+/// original bytes come back unchanged inside `Ok`. This is the real control
+/// flow the (now-removed) dead `SyntaxErrors` arm misrepresented.
+#[test]
+fn syntax_error_buffer_is_ok_passthrough_not_err() {
+    let src = "x = 1\n"; // missing `;` -> syntax error
+    let result = format_str(src).expect("syntax errors are Ok, not Err");
+    assert_eq!(result.output, src, "original must pass through unchanged");
+    assert!(!result.changed, "a passed-through buffer is unchanged");
+    // ...and the syntax errors are reported via the separate count pass.
+    assert!(
+        m1_fmt::syntax_error_count(src) > 0,
+        "syntax errors are surfaced via syntax_error_count, not FormatError"
+    );
 }

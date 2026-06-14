@@ -1,17 +1,15 @@
-use m1_core::Diagnostic;
-
+/// The formatter's only error type. Syntax errors are deliberately NOT errors:
+/// an unparseable buffer is returned as a data-preserving `Ok(FormatResult {
+/// changed: false, .. })` and surfaced separately via [`crate::syntax_error_count`].
+/// The only failure the library ever produces is a file-read I/O error.
 #[derive(Debug)]
 pub enum FormatError {
-    SyntaxErrors(Vec<Diagnostic>),
     IoError(std::io::Error),
 }
 
 impl std::fmt::Display for FormatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FormatError::SyntaxErrors(diags) => {
-                write!(f, "input has {} syntax error(s)", diags.len())
-            }
             FormatError::IoError(e) => write!(f, "IO error: {}", e),
         }
     }
