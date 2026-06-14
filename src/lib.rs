@@ -396,19 +396,29 @@ pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
     format_file_with(path, &FormatOptions::default())
 }
 
-pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
-    // `.m1scr` is MoTeC source: UTF-8 in practice but may carry Windows-1252
-    // bytes (e.g. `°` = 0xB0 in a comment). Decode tolerantly via the shared
-    // workspace decoder rather than failing the strict UTF-8 read (#58). The
-    // decoder strips a leading BOM (m1-workspace#9); read raw bytes so we can
-    // re-prepend it and round-trip a BOM-prefixed file.
-    let bytes = std::fs::read(path).map_err(FormatError::IoError)?;
+/// Decode raw `.m1scr` bytes via the shared tolerant workspace decoder while
+/// preserving a leading UTF-8 BOM.
+///
+/// `.m1scr` is MoTeC source: UTF-8 in practice but it may carry Windows-1252
+/// bytes (e.g. `°` = 0xB0 in a comment), so a strict UTF-8 read would fail
+/// (#58); [`m1_workspace::decode`] handles that fallback. That decoder also
+/// *strips* a leading BOM on purpose (m1-workspace#9) — but a formatter
+/// round-trips its input, so silently dropping the BOM would be exactly the
+/// #9-class data loss the formatter must avoid. This helper re-prepends the BOM
+/// when the raw bytes started with one, giving every read path (file, stdin,
+/// LSP) the same round-tripping behaviour from a single definition.
+pub fn decode_preserving_bom(bytes: Vec<u8>) -> String {
     let had_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
     let decoded = m1_workspace::decode(bytes);
-    let src = if had_bom {
+    if had_bom {
         format!("\u{FEFF}{decoded}")
     } else {
         decoded
-    };
+    }
+}
+
+pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
+    let bytes = std::fs::read(path).map_err(FormatError::IoError)?;
+    let src = decode_preserving_bom(bytes);
     format_str_with(&src, opts)
 }

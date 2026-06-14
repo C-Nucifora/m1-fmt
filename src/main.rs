@@ -53,19 +53,14 @@ struct Args {
     jobs: Option<usize>,
 }
 
-/// Read a file's text via the tolerant workspace decoder, but preserve a leading
-/// UTF-8 BOM that the decoder strips (m1-workspace#9). A formatter round-trips its
-/// input, so a BOM-prefixed file must keep its BOM; `format_str_with` then carries
-/// it through to the output.
+/// Read a file's text via the tolerant workspace decoder, preserving a leading
+/// UTF-8 BOM that the decoder strips (m1-workspace#9). A formatter round-trips
+/// its input, so a BOM-prefixed file must keep its BOM; the shared
+/// [`m1_fmt::decode_preserving_bom`] helper restores it and `format_str_with`
+/// then carries it through to the output.
 fn read_text_preserving_bom(path: &std::path::Path) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
-    let had_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
-    let decoded = m1_workspace::decode(bytes);
-    Ok(if had_bom {
-        format!("\u{FEFF}{decoded}")
-    } else {
-        decoded
-    })
+    Ok(m1_fmt::decode_preserving_bom(bytes))
 }
 
 /// Parse a `START:END` (1-based, inclusive) range argument.
@@ -351,16 +346,10 @@ fn main() {
             process::exit(2);
         }
         // The tolerant decoder strips a leading UTF-8 BOM (m1-workspace#9). For a
-        // formatter that round-trips its input we must NOT silently drop it: detect
-        // it on the raw bytes and re-prepend it so `format_str_with` preserves it
-        // (on both the normal path and the syntax-error passthrough) (#bom).
-        let had_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
-        let decoded = m1_workspace::decode(bytes);
-        let src = if had_bom {
-            format!("\u{FEFF}{decoded}")
-        } else {
-            decoded
-        };
+        // formatter that round-trips its input we must NOT silently drop it: the
+        // shared `decode_preserving_bom` helper re-prepends it so `format_str_with`
+        // preserves it (on both the normal path and the syntax-error passthrough).
+        let src = m1_fmt::decode_preserving_bom(bytes);
         match format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
             m1_fmt::FormatResult {
                 output,
