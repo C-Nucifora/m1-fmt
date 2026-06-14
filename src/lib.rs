@@ -5,7 +5,6 @@ pub mod printer;
 pub mod trivia;
 
 use std::borrow::Cow;
-use std::path::Path;
 
 pub use diagnostics::{FormatError, FormatWarning};
 
@@ -392,10 +391,6 @@ pub fn format_range(
     }))
 }
 
-pub fn format_file(path: &Path) -> Result<FormatResult, FormatError> {
-    format_file_with(path, &FormatOptions::default())
-}
-
 /// Decode raw `.m1scr` bytes via the shared tolerant workspace decoder while
 /// preserving a leading UTF-8 BOM.
 ///
@@ -415,10 +410,4 @@ pub fn decode_preserving_bom(bytes: Vec<u8>) -> String {
     } else {
         decoded
     }
-}
-
-pub fn format_file_with(path: &Path, opts: &FormatOptions) -> Result<FormatResult, FormatError> {
-    let bytes = std::fs::read(path).map_err(FormatError::IoError)?;
-    let src = decode_preserving_bom(bytes);
-    format_str_with(&src, opts)
 }
