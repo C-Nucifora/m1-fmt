@@ -1,6 +1,6 @@
 //! Regression tests for comment/trivia handling and BOM preservation.
 
-use m1_fmt::{FormatOptions, format_str, format_str_with};
+use m1_fmt::{FormatOptions, decode_preserving_bom, format_str, format_str_with};
 
 fn fmt(src: &str) -> String {
     format_str(src).unwrap().output
@@ -105,4 +105,28 @@ fn bom_with_crlf_round_trips() {
         .unwrap()
         .output;
     assert_eq!(out, "\u{FEFF}local x = 1;\r\n", "got:\n{out:?}");
+}
+
+/// #bom: the shared decode-preserving-BOM helper restores a leading UTF-8 BOM
+/// that `m1_workspace::decode` strips (m1-workspace#9). All read paths route
+/// through this one helper, so the round-trip invariant is enforced in one place.
+#[test]
+fn decode_preserving_bom_restores_a_stripped_bom() {
+    let bytes = b"\xEF\xBB\xBFlocal x=1;\n".to_vec();
+    let decoded = decode_preserving_bom(bytes);
+    assert_eq!(
+        decoded, "\u{FEFF}local x=1;\n",
+        "a BOM-prefixed input must keep its BOM; got:\n{decoded:?}"
+    );
+}
+
+/// A BOM-less input must NOT gain a spurious BOM.
+#[test]
+fn decode_preserving_bom_leaves_bom_less_input_untouched() {
+    let bytes = b"local x=1;\n".to_vec();
+    let decoded = decode_preserving_bom(bytes);
+    assert_eq!(
+        decoded, "local x=1;\n",
+        "a BOM-less input must not gain a BOM; got:\n{decoded:?}"
+    );
 }
