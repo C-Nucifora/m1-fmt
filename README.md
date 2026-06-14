@@ -57,6 +57,15 @@ The unified workspace config (`m1-tools.toml [format]`) uses `line_width` instea
 `max_line_length`; `.m1fmt.toml` always uses `max_line_length`. Unknown keys are
 silently ignored, so a mismatched key name is never an error — it just has no effect.
 
+The same knobs are also available as CLI flags for a one-off run without
+committing a config file (handy for previewing a house style or in an ad-hoc CI
+invocation):
+
+```sh
+m1-fmt --indent-style spaces --brace-style kr file.m1scr
+m1-fmt --indent-width 2 --line-width 100 --continuation-indent 2 file.m1scr
+```
+
 Precedence: built-in defaults < `m1-tools.toml` `[format]` < `.m1fmt.toml` <
 CLI flags. The workspace-level `m1-tools.toml` is shared with `m1-lint`,
 `m1-lsp`, and the editor integrations — see the

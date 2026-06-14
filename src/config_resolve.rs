@@ -9,15 +9,24 @@
 //! plain `Option`s so the precedence logic can be tested without constructing a
 //! full argument set.
 
-use m1_fmt::FormatOptions;
+use m1_fmt::{BraceStyle, FormatOptions, IndentStyle};
 use std::path::Path;
 
 /// Explicit CLI flag overrides (highest precedence). `None` means "not given on
 /// the command line", so the resolved value comes from config or the default.
+///
+/// The two enum knobs are carried as the already-parsed [`IndentStyle`] /
+/// [`BraceStyle`] (not raw strings): `main` validates the flag values eagerly so
+/// a bad spelling is a usage error (exit 2) before any formatting runs, the same
+/// as `--range` / `--jobs`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CliOverrides {
     pub max_blank_lines: Option<usize>,
     pub line_width: Option<usize>,
+    pub indent_style: Option<IndentStyle>,
+    pub brace_style: Option<BraceStyle>,
+    pub indent_width: Option<usize>,
+    pub continuation_indent: Option<usize>,
 }
 
 /// Resolve [`FormatOptions`] for a file/stdin in `dir`, layering lowest-first:
@@ -110,6 +119,18 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
     if let Some(n) = overrides.line_width {
         o.line_width = n;
     }
+    if let Some(s) = overrides.indent_style {
+        o.indent_style = s;
+    }
+    if let Some(s) = overrides.brace_style {
+        o.brace_style = s;
+    }
+    if let Some(n) = overrides.indent_width {
+        o.indent_width = n;
+    }
+    if let Some(n) = overrides.continuation_indent {
+        o.continuation_indent = n;
+    }
     o
 }
 
@@ -201,5 +222,52 @@ mod resolve_tests {
             tmp.path(),
         );
         assert_eq!(o.line_width, 70);
+    }
+
+    #[test]
+    fn style_flags_override_both_config_files() {
+        // The manual-mandated style knobs (and the width knobs) must be settable
+        // by CLI flag, winning over both config files. Both files set every knob;
+        // the CLI overrides flip each one to a different value.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nindent_style = \"tab\"\nbrace_style = \"allman\"\nindent_width = 4\ncontinuation_indent = 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join(".m1fmt.toml"),
+            "indent_style = \"tab\"\nbrace_style = \"allman\"\nindent_width = 4\ncontinuation_indent = 1\n",
+        )
+        .unwrap();
+        let o = resolve_opts(
+            CliOverrides {
+                indent_style: Some(IndentStyle::Spaces),
+                brace_style: Some(BraceStyle::Kr),
+                indent_width: Some(2),
+                continuation_indent: Some(3),
+                ..Default::default()
+            },
+            tmp.path(),
+        );
+        assert_eq!(o.indent_style, IndentStyle::Spaces, "flag beats config");
+        assert_eq!(o.brace_style, BraceStyle::Kr, "flag beats config");
+        assert_eq!(o.indent_width, 2, "flag beats config");
+        assert_eq!(o.continuation_indent, 3, "flag beats config");
+    }
+
+    #[test]
+    fn absent_style_flags_fall_through_to_config() {
+        // A `None` style override must not clobber the config value (the
+        // `if let Some` guard); only an explicit flag wins.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(".m1fmt.toml"),
+            "indent_style = \"spaces\"\nbrace_style = \"kr\"\n",
+        )
+        .unwrap();
+        let o = resolve_opts(CliOverrides::default(), tmp.path());
+        assert_eq!(o.indent_style, IndentStyle::Spaces);
+        assert_eq!(o.brace_style, BraceStyle::Kr);
     }
 }
