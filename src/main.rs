@@ -39,6 +39,26 @@ struct Args {
     #[arg(long)]
     line_width: Option<usize>,
 
+    /// Indentation character: `tab` (default, per the manual) or `spaces`
+    /// (overrides .m1fmt.toml / m1-tools.toml)
+    #[arg(long, value_name = "tab|spaces")]
+    indent_style: Option<String>,
+
+    /// Opening-brace placement: `allman` (default, per the manual) or `kr`
+    /// (overrides .m1fmt.toml / m1-tools.toml)
+    #[arg(long, value_name = "allman|kr")]
+    brace_style: Option<String>,
+
+    /// Columns one indent level occupies (default 4; for tabs this is the
+    /// assumed display width used by the wrapping math; overrides .m1fmt.toml)
+    #[arg(long, value_name = "N")]
+    indent_width: Option<usize>,
+
+    /// Extra indent levels added to wrapped/continuation lines (default 1, per
+    /// the manual; overrides .m1fmt.toml)
+    #[arg(long, value_name = "N")]
+    continuation_indent: Option<usize>,
+
     /// Format only the given 1-based inclusive line range (`START:END`); the rest
     /// of the buffer is left byte-for-byte unchanged. The range is snapped outward
     /// to whole top-level statements. For LSP/editor format-on-selection.
@@ -112,10 +132,51 @@ fn format_buffer(
 }
 
 /// The CLI flag overrides for [`config_resolve::resolve_opts`], taken from `args`.
-fn cli_overrides(args: &Args) -> config_resolve::CliOverrides {
+///
+/// The two enum-valued flags (`--indent-style`, `--brace-style`) are parsed and
+/// validated eagerly in [`parse_style_overrides`] before this is called, so the
+/// already-typed values are passed in rather than re-parsed here.
+fn cli_overrides(args: &Args, styles: StyleOverrides) -> config_resolve::CliOverrides {
     config_resolve::CliOverrides {
         max_blank_lines: args.max_blank_lines,
         line_width: args.line_width,
+        indent_style: styles.indent_style,
+        brace_style: styles.brace_style,
+        indent_width: args.indent_width,
+        continuation_indent: args.continuation_indent,
+    }
+}
+
+/// The parsed-and-validated enum style flags. Produced once in `main` so an
+/// invalid spelling is reported as a usage error before any formatting runs.
+#[derive(Clone, Copy, Default)]
+struct StyleOverrides {
+    indent_style: Option<m1_fmt::IndentStyle>,
+    brace_style: Option<m1_fmt::BraceStyle>,
+}
+
+/// Validate the `--indent-style` / `--brace-style` flag values eagerly. A bad
+/// spelling prints a message listing the accepted values and exits 2 (the usage
+/// error code, matching `--range` / `--jobs`) instead of failing later or being
+/// silently ignored.
+fn parse_style_overrides(args: &Args) -> StyleOverrides {
+    let indent_style = args.indent_style.as_deref().map(|s| {
+        m1_fmt::config::parse_indent_style(s).unwrap_or_else(|| {
+            eprintln!(
+                "m1-fmt: invalid --indent-style {s:?}; expected one of: tab, tabs, space, spaces"
+            );
+            process::exit(2);
+        })
+    });
+    let brace_style = args.brace_style.as_deref().map(|s| {
+        m1_fmt::config::parse_brace_style(s).unwrap_or_else(|| {
+            eprintln!("m1-fmt: invalid --brace-style {s:?}; expected one of: allman, kr, k&r, knr");
+            process::exit(2);
+        })
+    });
+    StyleOverrides {
+        indent_style,
+        brace_style,
     }
 }
 
@@ -286,6 +347,11 @@ fn main() {
         }
     }
 
+    // Validate the enum style flags eagerly: a bad `--indent-style` /
+    // `--brace-style` spelling is a usage error (exit 2) reported before any
+    // formatting runs, alongside the --jobs / --range checks above.
+    let styles = parse_style_overrides(&args);
+
     let range = match args.range.as_deref() {
         None => None,
         Some(s) => match parse_range(s) {
@@ -335,7 +401,7 @@ fn main() {
     if args.files.is_empty() && !had_dir {
         // Read from stdin. Discover .m1fmt.toml from the working directory.
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let opts = config_resolve::resolve_opts(cli_overrides(&args), &cwd);
+        let opts = config_resolve::resolve_opts(cli_overrides(&args, styles), &cwd);
         // Read stdin as bytes and decode through the same tolerant workspace
         // decoder the file path uses (UTF-8 with a Windows-1252 fallback): a
         // piped `.m1scr` may carry CP1252 bytes (e.g. `°` = 0xB0), and a strict
@@ -397,7 +463,7 @@ fn main() {
         //
         // Resolved serially up front so the parallel loop below borrows the cache
         // read-only and stays share-nothing (#109).
-        let overrides = cli_overrides(&args);
+        let overrides = cli_overrides(&args, styles);
         let mut opts_cache: HashMap<PathBuf, m1_fmt::FormatOptions> = HashMap::new();
         for path in &args.files {
             let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));

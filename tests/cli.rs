@@ -547,6 +547,76 @@ fn empty_directory_reports_and_fails() {
     );
 }
 
+/// The two manual-mandated style knobs (tab indentation, Allman braces) and the
+/// width knobs must be settable as one-off CLI flags, not only via a committed
+/// `.m1fmt.toml`. `--brace-style kr` over stdin must override the Allman default
+/// so an ad-hoc / CI / format-on-selection invocation can preview a house style
+/// without writing a config file to disk.
+#[test]
+fn brace_style_flag_overrides_default_over_stdin() {
+    let input = "if (A > B)\n{\n\tValue = 1;\n}\n";
+
+    // Default (Allman): brace stays on its own line.
+    let (default_out, default_err, default_code) = run_with_stdin(&[], input);
+    assert_eq!(default_code, Some(0), "stderr: {default_err}");
+    assert_eq!(
+        default_out, input,
+        "the default Allman output must keep the brace on its own line"
+    );
+
+    // --brace-style kr: opening brace joins the keyword line.
+    let (kr_out, kr_err, kr_code) = run_with_stdin(&["--brace-style", "kr"], input);
+    assert_eq!(kr_code, Some(0), "stderr: {kr_err}");
+    assert_ne!(
+        kr_out, default_out,
+        "--brace-style kr must change the output vs the Allman default"
+    );
+    assert!(
+        kr_out.contains("if (A > B) {"),
+        "K&R must put the opening brace on the keyword line; got: {kr_out:?}"
+    );
+}
+
+/// `--indent-style spaces` must override the tab default for a one-off run.
+#[test]
+fn indent_style_flag_overrides_default_over_stdin() {
+    let input = "if (A > B)\n{\n\tValue = 1;\n}\n";
+    let (out, err, code) = run_with_stdin(&["--indent-style", "spaces"], input);
+    assert_eq!(code, Some(0), "stderr: {err}");
+    assert!(
+        out.contains("\n    Value = 1;"),
+        "--indent-style spaces must indent with spaces, not a tab; got: {out:?}"
+    );
+    assert!(
+        !out.contains("\n\tValue = 1;"),
+        "the tab default must be overridden; got: {out:?}"
+    );
+}
+
+/// An invalid `--brace-style` value is a usage error: exit 2 with a message that
+/// lists the accepted spellings (matching the existing --jobs/--range pattern).
+#[test]
+fn invalid_brace_style_flag_is_a_usage_error_exit_two() {
+    let (_out, stderr, code) = run_with_stdin(&["--brace-style", "egyptian", "-"], "x = 1;\n");
+    assert_eq!(code, Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.contains("brace-style") && stderr.contains("allman") && stderr.contains("kr"),
+        "the error must name the flag and list accepted values; stderr: {stderr}"
+    );
+}
+
+/// An invalid `--indent-style` value is a usage error: exit 2 with a helpful
+/// message listing the accepted spellings.
+#[test]
+fn invalid_indent_style_flag_is_a_usage_error_exit_two() {
+    let (_out, stderr, code) = run_with_stdin(&["--indent-style", "tabz", "-"], "x = 1;\n");
+    assert_eq!(code, Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.contains("indent-style") && stderr.contains("tab") && stderr.contains("spaces"),
+        "the error must name the flag and list accepted values; stderr: {stderr}"
+    );
+}
+
 #[test]
 fn multi_file_diff_output_is_ordered_and_deterministic() {
     // #109: files are formatted in parallel, but the captured per-file output must
