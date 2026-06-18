@@ -193,7 +193,7 @@ impl Printer {
                 // line overflows *and* the continuation column is further left
                 // than where we are, break after `(` and emit the argument at the
                 // smaller column so its own nested wrapping recurses.
-                let cont_col = (self.indent + self.continuation_indent) * self.indent_width;
+                let cont_col = self.continuation_col();
                 if self.current_col() + first_line + tail > self.width
                     && cont_col < self.current_col()
                 {

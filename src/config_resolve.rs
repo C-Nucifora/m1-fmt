@@ -12,6 +12,33 @@
 use m1_fmt::{BraceStyle, FormatOptions, IndentStyle};
 use std::path::Path;
 
+/// Upper bound for the indent-width knobs (`indent_width`, `continuation_indent`).
+///
+/// These feed the wrapping column math — `visual_width` sums `indent_width` per
+/// tab and the last-resort assignment break computes
+/// `(indent + continuation_indent) * indent_width`. Config files accept any
+/// non-negative integer up to `i64::MAX` (`config.rs` `uint`) and the CLI any
+/// `usize`, so a pathologically large value overflows those arithmetic ops and
+/// panics (debug) / wraps (release). No realistic configuration needs more than
+/// a handful of columns, so we cap both at a small sane maximum at
+/// option-resolution time. For tabs, `indent_width` is only the *assumed* display
+/// width used for wrap math, so a cap of 64 is harmless to real output.
+pub const MAX_INDENT_WIDTH: usize = 64;
+
+/// Cap `value` at [`MAX_INDENT_WIDTH`], emitting a one-line stderr warning naming
+/// `knob` when it was out of range, so the user learns the input was clamped
+/// rather than silently formatting with a different width.
+fn clamp_indent(knob: &str, value: usize) -> usize {
+    if value > MAX_INDENT_WIDTH {
+        eprintln!(
+            "m1-fmt: {knob} {value} exceeds the maximum of {MAX_INDENT_WIDTH}; clamped to {MAX_INDENT_WIDTH}"
+        );
+        MAX_INDENT_WIDTH
+    } else {
+        value
+    }
+}
+
 /// Explicit CLI flag overrides (highest precedence). `None` means "not given on
 /// the command line", so the resolved value comes from config or the default.
 ///
@@ -145,6 +172,14 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
     if let Some(b) = overrides.final_blank_line {
         o.final_blank_line = b;
     }
+
+    // Cap the width knobs to a sane maximum after all layering. A pathologically
+    // large value (from a committed config file or a stray CLI flag) would
+    // otherwise overflow the wrapping column math and panic/wrap. The cap is
+    // applied once, here, instead of scattering saturating ops through the
+    // printer.
+    o.indent_width = clamp_indent("indent_width", o.indent_width);
+    o.continuation_indent = clamp_indent("continuation_indent", o.continuation_indent);
     o
 }
 
@@ -310,6 +345,50 @@ mod resolve_tests {
         // Absent (None) must not clobber a config that enabled them.
         let o3 = resolve_opts(CliOverrides::default(), tmp.path());
         assert!(o3.align_assignments && o3.reflow_comments && o3.final_blank_line);
+    }
+
+    #[test]
+    fn pathological_width_knobs_are_clamped() {
+        // A committed .m1fmt.toml (config.rs `uint` accepts any non-negative
+        // integer up to i64::MAX) with absurd indent widths must be capped at
+        // resolution time so the wrapping column math can't overflow downstream.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(".m1fmt.toml"),
+            "indent_width = 9223372036854775807\ncontinuation_indent = 9223372036854775807\n",
+        )
+        .unwrap();
+        let o = resolve_opts(CliOverrides::default(), tmp.path());
+        assert_eq!(o.indent_width, MAX_INDENT_WIDTH);
+        assert_eq!(o.continuation_indent, MAX_INDENT_WIDTH);
+
+        // A CLI flag (any usize) is clamped too.
+        let empty = tempfile::tempdir().unwrap();
+        let o2 = resolve_opts(
+            CliOverrides {
+                indent_width: Some(usize::MAX),
+                continuation_indent: Some(usize::MAX),
+                ..Default::default()
+            },
+            empty.path(),
+        );
+        assert_eq!(o2.indent_width, MAX_INDENT_WIDTH);
+        assert_eq!(o2.continuation_indent, MAX_INDENT_WIDTH);
+    }
+
+    #[test]
+    fn sane_width_knobs_pass_through_unclamped() {
+        // Values within range are untouched (no spurious clamping/warning).
+        let o = resolve_opts(
+            CliOverrides {
+                indent_width: Some(4),
+                continuation_indent: Some(2),
+                ..Default::default()
+            },
+            tempfile::tempdir().unwrap().path(),
+        );
+        assert_eq!(o.indent_width, 4);
+        assert_eq!(o.continuation_indent, 2);
     }
 
     #[test]
