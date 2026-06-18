@@ -3,7 +3,6 @@ use m1_core::{Cst, Kind, Node};
 #[derive(Debug, Clone)]
 pub struct TriviaItem {
     pub byte_offset: usize,
-    pub end_offset: usize,
     pub text: String,
     pub source_line: usize,
 }
@@ -22,7 +21,6 @@ fn collect_node(node: Node, source: &str, out: &mut Vec<TriviaItem>) {
         let source_line = source[..range.start].chars().filter(|&c| c == '\n').count();
         out.push(TriviaItem {
             byte_offset: range.start,
-            end_offset: range.end,
             text,
             source_line,
         });
@@ -109,7 +107,6 @@ mod tests {
         // `a = 1; b = 2; // tail` — the comment sits on line 0 at byte 14.
         let comment = TriviaItem {
             byte_offset: 14, // position of `//`
-            end_offset: 21,
             text: "// tail".to_string(),
             source_line: 0,
         };
