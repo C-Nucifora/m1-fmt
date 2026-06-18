@@ -440,9 +440,24 @@ fn main() {
     }
 
     if args.files.is_empty() && !had_dir {
-        // Read from stdin. Discover .m1fmt.toml from the working directory.
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let opts = config_resolve::resolve_opts(cli_overrides(&args, styles), &cwd);
+        // Read from stdin. Discover .m1fmt.toml / m1-tools.toml from the directory
+        // of `--stdin-filename` when the caller supplied a real path (the standard
+        // editor-integration knob, like rustfmt's --stdin-filepath): an editor
+        // pipes a buffer while running from an arbitrary cwd and passes the file's
+        // path so config resolution finds the project the buffer belongs to.
+        // Fall back to the working directory when no usable path was given.
+        let disc_dir = (args.stdin_filename != "<stdin>")
+            .then(|| {
+                std::path::Path::new(&args.stdin_filename)
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(|p| p.to_path_buf())
+            })
+            .flatten()
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+        let opts = config_resolve::resolve_opts(cli_overrides(&args, styles), &disc_dir);
         // Read stdin as bytes and decode through the same tolerant workspace
         // decoder the file path uses (UTF-8 with a Windows-1252 fallback): a
         // piped `.m1scr` may carry CP1252 bytes (e.g. `°` = 0xB0), and a strict
