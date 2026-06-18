@@ -30,6 +30,26 @@ default (`--jobs` to control). A file with syntax errors is left byte-for-byte
 unchanged — formatting never corrupts unparseable input — and `--check`
 reports it and exits non-zero so CI doesn't mistake it for a clean file.
 
+### Formatting from stdin
+
+With no file arguments (or a lone `-`) `m1-fmt` reads the script from stdin and
+writes the formatted result to stdout — the path editors use to format an
+unsaved buffer:
+
+```sh
+cat file.m1scr | m1-fmt -                                  # format a buffer
+m1-fmt --stdin-filename Scripts/Foo.m1scr - < file.m1scr   # editor integration
+```
+
+`--stdin-filename` names the buffer for diagnostics **and** drives configuration
+discovery: when it is a real path, `m1-fmt` walks up from that file's directory
+to find the project's `.m1fmt.toml` / `m1-tools.toml`, so a piped buffer is
+formatted with the same style as the file on disk — even when the formatter runs
+from a different working directory (as editors and CI steps commonly do). This
+matches `rustfmt --stdin-filepath` / `prettier --stdin-filepath` /
+`black --stdin-filename`. Without it (or with a bare relative name) discovery
+falls back to the current working directory.
+
 ## Guarantees
 
 Every format is verified to uphold three invariants — also exercised by a

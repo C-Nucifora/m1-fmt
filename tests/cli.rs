@@ -736,3 +736,68 @@ fn reflow_comments_flag_is_accepted() {
     assert_eq!(code, Some(0), "--reflow-comments must be a known flag");
     assert_eq!(out, input, "a short comment is not reflowed");
 }
+
+/// Run the stdin path with an explicit working directory (so the test can prove
+/// config discovery does NOT depend on cwd when `--stdin-filename` points
+/// elsewhere). Mirrors `run_with_stdin_bytes` but sets `.current_dir`.
+fn run_with_stdin_in_dir(
+    args: &[&str],
+    input: &str,
+    cwd: &std::path::Path,
+) -> (String, String, Option<i32>) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn m1-fmt");
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        if let Err(e) = stdin.write_all(input.as_bytes()) {
+            assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::BrokenPipe,
+                "writing to m1-fmt stdin failed: {e}"
+            );
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code(),
+    )
+}
+
+/// `--stdin-filename` must drive `.m1fmt.toml` / `m1-tools.toml` discovery, not
+/// just diagnostic headers. An editor pipes a buffer while running from an
+/// arbitrary cwd and passes the file's real path; the project's committed config
+/// (here `brace_style = "kr"`) must apply, not the manual default (Allman). This
+/// is the same contract as rustfmt's `--stdin-filepath` / prettier's
+/// `--stdin-filepath` / black's `--stdin-filename`.
+#[test]
+fn stdin_filename_drives_config_discovery() {
+    // Project dir carries an overriding .m1fmt.toml (kr braces).
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join(".m1fmt.toml"), "brace_style = \"kr\"\n").unwrap();
+    let file_path = project.path().join("Foo.m1scr");
+
+    // A separate, config-free cwd: discovery from cwd would find nothing and
+    // fall back to the manual default (Allman).
+    let other_cwd = tempfile::tempdir().unwrap();
+
+    let input = "if (a) {\nValue = 1;\n}\n";
+    let (out, stderr, code) = run_with_stdin_in_dir(
+        &["--stdin-filename", file_path.to_str().unwrap()],
+        input,
+        other_cwd.path(),
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    // kr keeps the opening brace on the same line as the condition.
+    assert_eq!(
+        out, "if (a) {\n\tValue = 1;\n}\n",
+        "--stdin-filename must locate the project .m1fmt.toml (kr braces); got {out:?}"
+    );
+}
