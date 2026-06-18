@@ -5,17 +5,33 @@
 //! strip brace-adjacent blank lines, collapse blank runs, and normalize the
 //! trailing newline. Invoked by [`super::print_with`].
 
-/// Return the portion of `line` that is *code* — i.e. with `//` line comments
-/// and `"..."` string literals removed — so that brace counting and
-/// opener/closer detection only ever see real block delimiters. Braces that
-/// appear inside a comment or a string literal are not block structure and must
-/// not affect depth accounting (corpus: commented-out code with bare `//{` /
-/// `//}` lines and unbalanced braces in strings).
-fn code_only(line: &str) -> String {
+/// Return the portion of `line` that is *code* — i.e. with `//` line comments,
+/// `/* ... */` block comments and `"..."` string literals removed — so that
+/// brace counting and opener/closer detection only ever see real block
+/// delimiters. Braces that appear inside a comment or a string literal are not
+/// block structure and must not affect depth accounting (corpus: commented-out
+/// code with bare `//{` / `//}` lines, `/* TODO: } */` markers and unbalanced
+/// braces in strings).
+///
+/// `in_block_comment` carries `/* ... */` state across lines: it is `true` on
+/// entry when a previous line opened a block comment that has not yet closed,
+/// and is updated on exit to reflect whether this line left a block comment
+/// open. Callers that process a whole document line-by-line must thread this
+/// flag through their loop so interior braces of a multi-line block comment are
+/// skipped.
+fn code_only_carry(line: &str, in_block_comment: &mut bool) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
     let mut in_string = false;
     while let Some(c) = chars.next() {
+        if *in_block_comment {
+            // Consume until the matching `*/`.
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                *in_block_comment = false;
+            }
+            continue;
+        }
         if in_string {
             if c == '\\' {
                 // Skip the escaped character verbatim.
@@ -28,15 +44,20 @@ fn code_only(line: &str) -> String {
         match c {
             '"' => in_string = true,
             '/' if chars.peek() == Some(&'/') => break, // `//` line comment
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                *in_block_comment = true;
+            }
             _ => out.push(c),
         }
     }
     out
 }
 
-/// Count code-only `{` and `}` on a line (comments and strings excluded).
-fn code_braces(line: &str) -> (i32, i32) {
-    let code = code_only(line);
+/// Count code-only `{` and `}` on a line (comments and strings excluded),
+/// threading multi-line block-comment state through `in_block_comment`.
+fn code_braces_carry(line: &str, in_block_comment: &mut bool) -> (i32, i32) {
+    let code = code_only_carry(line, in_block_comment);
     (
         code.matches('{').count() as i32,
         code.matches('}').count() as i32,
@@ -46,14 +67,28 @@ fn code_braces(line: &str) -> (i32, i32) {
 pub(super) fn strip_brace_adjacent_blanks(output: &mut String) {
     let lines: Vec<&str> = output.split_inclusive('\n').collect();
     let is_blank = |s: &str| s.strip_suffix('\n').unwrap_or(s).trim().is_empty();
+    // Block-comment state on *entry* to each line, so opener/closer detection on
+    // an arbitrary line index excludes braces inside a multi-line `/* ... */`.
+    let block_comment_entry: Vec<bool> = {
+        let mut entry = Vec::with_capacity(lines.len());
+        let mut carry = false;
+        for line in &lines {
+            entry.push(carry);
+            let content = line.strip_suffix('\n').unwrap_or(line);
+            let _ = code_only_carry(content, &mut carry);
+        }
+        entry
+    };
     // Opener/closer detection runs on the code-only portion of the line so a
-    // brace inside a `//` comment or a string literal is never mistaken for a
-    // block delimiter.
-    fn code_trimmed_end(s: &str) -> String {
-        code_only(s.strip_suffix('\n').unwrap_or(s))
+    // brace inside a `//` or `/* ... */` comment or a string literal is never
+    // mistaken for a block delimiter.
+    let code_trimmed_end = |idx: usize| -> String {
+        let s = lines[idx];
+        let mut carry = block_comment_entry[idx];
+        code_only_carry(s.strip_suffix('\n').unwrap_or(s), &mut carry)
             .trim_end()
             .to_string()
-    }
+    };
     let mut keep = vec![true; lines.len()];
 
     for i in 0..lines.len() {
@@ -65,11 +100,11 @@ pub(super) fn strip_brace_adjacent_blanks(output: &mut String) {
         let next_nonblank = (i + 1..lines.len()).find(|&j| !is_blank(lines[j]));
         match prev_nonblank {
             None => keep[i] = false, // leading run
-            Some(p) if code_trimmed_end(lines[p]).ends_with('{') => keep[i] = false,
+            Some(p) if code_trimmed_end(p).ends_with('{') => keep[i] = false,
             _ => {}
         }
         if let Some(n) = next_nonblank {
-            let code = code_trimmed_end(lines[n]);
+            let code = code_trimmed_end(n);
             if code == "}" || code.starts_with('}') {
                 keep[i] = false;
             }
@@ -135,13 +170,20 @@ pub(super) fn ensure_blank_after_top_level_when(output: &mut String) {
     let mut result = String::with_capacity(output.len() + 8);
     let mut depth: i32 = 0;
     let mut in_top_when = false;
+    let mut in_block_comment = false;
     for (i, line) in lines.iter().enumerate() {
         result.push_str(line);
         let content = line.strip_suffix('\n').unwrap_or(line);
-        if depth == 0 && (content.starts_with("when (") || content.starts_with("when(")) {
+        if depth == 0
+            && !in_block_comment
+            && (content.starts_with("when (") || content.starts_with("when("))
+        {
             in_top_when = true;
         }
-        let (opens, closes) = code_braces(content);
+        // Counts code braces and advances `in_block_comment` across this line so
+        // braces inside a multi-line `/* ... */` are never counted as block
+        // structure.
+        let (opens, closes) = code_braces_carry(content, &mut in_block_comment);
         let before = depth;
         depth += opens - closes;
         if in_top_when && before > 0 && depth == 0 {
