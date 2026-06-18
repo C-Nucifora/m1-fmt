@@ -11,20 +11,54 @@ use m1_core::{Kind, Node};
 
 impl Printer {
     /// Push `n` indent levels to the output (a tab each, or `indent_width` spaces).
+    ///
+    /// The level count and `indent_width` are bounded in practice (real nesting
+    /// depth; width knobs clamped at option resolution — see
+    /// `config_resolve::MAX_INDENT_WIDTH`). As defense-in-depth against a value
+    /// that bypasses the clamp, the emitted character count is computed with
+    /// saturating arithmetic and capped, so the formatter can never overflow or
+    /// stall emitting an absurd run of whitespace.
     pub(super) fn push_levels(&mut self, n: usize) {
-        match self.indent_style {
-            crate::IndentStyle::Tab => (0..n).for_each(|_| self.output.push('\t')),
-            crate::IndentStyle::Spaces => {
-                (0..n * self.indent_width).for_each(|_| self.output.push(' '))
-            }
+        // A line of indentation can never legitimately need more than this many
+        // characters; cap so a pathological count degrades gracefully.
+        const MAX_INDENT_CHARS: usize = 4096;
+        let count = match self.indent_style {
+            crate::IndentStyle::Tab => n,
+            crate::IndentStyle::Spaces => n.saturating_mul(self.indent_width),
         }
+        .min(MAX_INDENT_CHARS);
+        let ch = match self.indent_style {
+            crate::IndentStyle::Tab => '\t',
+            crate::IndentStyle::Spaces => ' ',
+        };
+        (0..count).for_each(|_| self.output.push(ch));
+    }
+
+    /// Display column where a continuation line (block indent + the configured
+    /// continuation indent) begins, in the same column units as
+    /// [`Self::current_col`].
+    ///
+    /// `indent_width` and `continuation_indent` are clamped to a sane maximum at
+    /// option-resolution time (see `config_resolve::MAX_INDENT_WIDTH`); the
+    /// computation here uses saturating arithmetic as defense-in-depth so any
+    /// path that bypasses the clamp degrades to `usize::MAX` instead of panicking
+    /// on overflow.
+    pub(super) fn continuation_col(&self) -> usize {
+        self.indent
+            .saturating_add(self.continuation_indent)
+            .saturating_mul(self.indent_width)
     }
 
     /// Display width of `s` in columns, expanding tabs to `indent_width`.
+    ///
+    /// `indent_width` is clamped to a sane maximum at option-resolution time
+    /// (see `config_resolve::MAX_INDENT_WIDTH`), but the per-tab accumulation
+    /// uses `saturating_add` as defense-in-depth so any path that bypasses the
+    /// clamp degrades to `usize::MAX` instead of panicking on overflow.
     pub(super) fn visual_width(&self, s: &str) -> usize {
         s.chars()
             .map(|c| if c == '\t' { self.indent_width } else { 1 })
-            .sum()
+            .fold(0usize, usize::saturating_add)
     }
 
     /// Preserve author blank lines between the previous statement and the one

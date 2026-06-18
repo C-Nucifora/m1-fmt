@@ -187,7 +187,7 @@ impl Printer {
     fn emit_rhs_with_last_resort_break(&mut self, rhs: Node) {
         let op_col = self.current_col(); // column right after the operator
         let inline_col = op_col + 1; // adds the " " separator
-        let cont_col = (self.indent + self.continuation_indent) * self.indent_width;
+        let cont_col = self.continuation_col();
         // The break is only worthwhile when (a) the continuation column is left
         // of where the RHS would sit inline, and (b) the operator line itself
         // (`LHS =`) already fits — otherwise moving the RHS down leaves the first
