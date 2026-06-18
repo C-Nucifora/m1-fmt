@@ -58,6 +58,29 @@ fn comment_before_else_if_stays_above_keyword() {
     assert_eq!(out, src, "comment was relocated; got:\n{out}");
 }
 
+/// #76: an own-line comment between an `if (cond)` opener and its `{` must stay
+/// above the brace, on its own line at the opener indent — not pulled inside the
+/// block. This is the shared "flush leading comment before opener" rule.
+#[test]
+fn comment_before_if_brace_stays_above_brace() {
+    let src = "if (a > 0)\n// take the branch\n{\n\tb = 1;\n}\n";
+    let out = fmt(src);
+    assert_eq!(out, src, "comment was relocated; got:\n{out}");
+    assert_eq!(fmt(&out), out, "not idempotent");
+}
+
+/// #76 (extended to `when`): an own-line comment between a `when (subject)`
+/// opener and its `{` must stay above the brace, identically to the `if` case.
+/// Pins that the `if`/`when`/`else` openers share one behaviour — the guard
+/// against the deduplicated helper drifting between them.
+#[test]
+fn comment_before_when_brace_stays_above_brace() {
+    let src = "when (x)\n// dispatch on x\n{\n\tis (A)\n\t{\n\t\tb = 1;\n\t}\n}\n";
+    let out = fmt(src);
+    assert_eq!(out, src, "comment was relocated; got:\n{out}");
+    assert_eq!(fmt(&out), out, "not idempotent");
+}
+
 /// #127: an assignment whose RHS overflows `line_width` but has no internal
 /// break point (a call with an empty argument list) must break after `=` onto a
 /// tab-indented continuation line, rather than being emitted over-budget with

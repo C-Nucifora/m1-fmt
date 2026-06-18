@@ -28,6 +28,34 @@ impl Printer {
         }
     }
 
+    /// Flush a leading own-line comment that sits between an inline opener and
+    /// the `token` that follows it (an opening `{`, or an `else` keyword), then
+    /// emit that token on its own line at the current indent.
+    ///
+    /// The opener's line was emitted with no trailing newline, so we first drop
+    /// onto a fresh line (`emit_blank_gap` only fills *extra* blank lines, not
+    /// the base break before the comment). We then anchor the blank-gap baseline
+    /// to the first pending comment's own source line so no blank line is
+    /// inserted between the opener and the comment: without this the gap is
+    /// measured from a stale `prev_end_line` and, once the opener/comment shift
+    /// onto their own lines, a spurious blank appears on the next format pass
+    /// (non-idempotent on the real corpus — #76 / #126). Finally we flush the
+    /// trivia ahead of `before_byte`, re-indent, and emit `token` on its own
+    /// line (so even under K&R the token is not glued onto the comment).
+    ///
+    /// The distinct guard that decides *whether* a leading comment is present —
+    /// and the no-comment fallback (`emit_block_open` vs the Allman `else`
+    /// match) — stays at each call site, since those differ per construct.
+    pub(super) fn flush_leading_comment_then(&mut self, before_byte: usize, token: &str) {
+        self.emit_newline();
+        if let Some(first) = self.trivia.front() {
+            self.prev_end_line = Some(first.source_line);
+        }
+        self.flush_trivia_before(before_byte);
+        self.emit_indent();
+        self.emit(token);
+    }
+
     /// Width reserved on the opener's last line for what follows the `)` before
     /// the block: `) {` (3) for K&R, just `)` (1) for Allman (brace next line).
     pub(super) fn close_paren_reserve(&self) -> usize {
@@ -53,21 +81,7 @@ impl Printer {
                 .map(|c| c.byte_range().start)
             && self.trivia.front().is_some_and(|t| t.byte_offset < lbrace)
         {
-            // Drop off the opener's line first: the condition was emitted with no
-            // trailing newline, and `emit_blank_gap` only fills *extra* blank
-            // lines, not the base line break before the comment.
-            self.emit_newline();
-            // Anchor the blank-gap baseline to the first comment's own line so no
-            // blank line is inserted between the opener and the comment. Without
-            // this the gap is measured from a stale `prev_end_line` and, once the
-            // opener/comment shift onto their own lines, a spurious blank appears
-            // on the next format pass (non-idempotent on the real corpus).
-            if let Some(first) = self.trivia.front() {
-                self.prev_end_line = Some(first.source_line);
-            }
-            self.flush_trivia_before(lbrace);
-            self.emit_indent();
-            self.emit("{");
+            self.flush_leading_comment_then(lbrace, "{");
         } else {
             self.emit_block_open(attached);
         }
@@ -159,13 +173,7 @@ impl Printer {
             .front()
             .is_some_and(|t| t.byte_offset < else_start);
         if has_leading_comment {
-            self.emit_newline();
-            if let Some(first) = self.trivia.front() {
-                self.prev_end_line = Some(first.source_line);
-            }
-            self.flush_trivia_before(else_start);
-            self.emit_indent();
-            self.emit("else");
+            self.flush_leading_comment_then(else_start, "else");
         } else {
             match self.brace_style {
                 crate::BraceStyle::Allman => {
@@ -212,13 +220,7 @@ impl Printer {
                     // (#76, extended to `when`). Mirror `print_block`'s handling.
                     let lbrace = child.byte_range().start;
                     if self.trivia.front().is_some_and(|t| t.byte_offset < lbrace) {
-                        self.emit_newline();
-                        if let Some(first) = self.trivia.front() {
-                            self.prev_end_line = Some(first.source_line);
-                        }
-                        self.flush_trivia_before(lbrace);
-                        self.emit_indent();
-                        self.emit("{");
+                        self.flush_leading_comment_then(lbrace, "{");
                     } else {
                         self.emit_block_open(true);
                     }
