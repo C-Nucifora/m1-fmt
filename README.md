@@ -66,6 +66,16 @@ m1-fmt --indent-style spaces --brace-style kr file.m1scr
 m1-fmt --indent-width 2 --line-width 100 --continuation-indent 2 file.m1scr
 ```
 
+The opt-in extras have flags too — `--align-assignments`, `--reflow-comments`,
+and `--final-blank-line` (each with a `--no-…` form to switch it back off over a
+config that enabled it). Assignment alignment lines up the `=` of contiguous
+single-line assignments; pair it with a wider `--line-width` so the aligned rows
+fit (a run that would overflow the width is left un-aligned):
+
+```sh
+m1-fmt --align-assignments --line-width 120 -i Scripts/
+```
+
 Precedence: built-in defaults < `m1-tools.toml` `[format]` < `.m1fmt.toml` <
 CLI flags. The workspace-level `m1-tools.toml` is shared with `m1-lint`,
 `m1-lsp`, and the editor integrations — see the
