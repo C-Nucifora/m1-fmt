@@ -124,6 +124,40 @@ fn comment_ending_in_brace_is_not_a_block_opener() {
     );
 }
 
+#[test]
+fn eol_block_comment_brace_does_not_corrupt_depth() {
+    // A `}` inside an end-of-line `/* ... */` block comment is not a real block
+    // delimiter and must not drop the tracked brace depth. The mandated blank
+    // line must land after the OUTER when-block brace, not between the inner and
+    // outer braces.
+    let src = "when (State)\n{\n\tis (Running)\n\t{\n\t\tx = 1; /* unbalanced } in comment */\n\t}\n}\ny = 2;\n";
+    let out = idempotent(src, &FormatOptions::default());
+    assert!(
+        !out.contains("\t}\n\n}"),
+        "spurious blank inserted inside when block (block-comment brace miscounted):\n{out}"
+    );
+    assert!(
+        out.contains("}\n\ny = 2;"),
+        "blank line missing after when block:\n{out}"
+    );
+}
+
+#[test]
+fn multiline_block_comment_brace_does_not_corrupt_depth() {
+    // A `}` inside a multi-line `/* ... */` block comment must be ignored across
+    // the line spanning the comment, leaving depth accounting intact.
+    let src = "when (State)\n{\n\tis (Running)\n\t{\n\t\t/* note:\n\t\t   closing } here\n\t\t*/\n\t\tx = 1;\n\t}\n}\ny = 2;\n";
+    let out = idempotent(src, &FormatOptions::default());
+    assert!(
+        !out.contains("\t}\n\n}"),
+        "spurious blank inserted inside when block (multi-line block-comment brace miscounted):\n{out}"
+    );
+    assert!(
+        out.contains("}\n\ny = 2;"),
+        "blank line missing after when block:\n{out}"
+    );
+}
+
 // ---- #96 align_assignments (opt-in) ----------------------------------------
 
 fn align_opts() -> FormatOptions {
