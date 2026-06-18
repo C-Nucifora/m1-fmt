@@ -669,3 +669,70 @@ fn multi_file_diff_output_is_ordered_and_deterministic() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// --- opt-in boolean flags: --align-assignments / --reflow-comments /
+// --final-blank-line (and their --no- counterparts), #96/#95/#116 ---------------
+
+/// `--align-assignments` aligns the `=` of a contiguous assignment run that the
+/// default (opt-in off) leaves single-spaced. Proves the flag is parsed and
+/// threaded end-to-end to the printer.
+#[test]
+fn align_assignments_flag_aligns_equals() {
+    let input = "Foo = 1;\nLonger Name = 2;\n";
+
+    // Default: no alignment — each `=` keeps its single space.
+    let (def_out, _, def_code) = run_with_stdin(&[], input);
+    assert_eq!(def_code, Some(0));
+    assert_eq!(
+        def_out, input,
+        "alignment is opt-in; default leaves it alone"
+    );
+
+    // With the flag: the shorter LHS is padded so the `=` line up.
+    let (al_out, _, al_code) = run_with_stdin(&["--align-assignments"], input);
+    assert_eq!(al_code, Some(0));
+    assert_eq!(
+        al_out, "Foo         = 1;\nLonger Name = 2;\n",
+        "--align-assignments must align the `=` column; got {al_out:?}"
+    );
+}
+
+/// `--no-align-assignments` wins over an earlier `--align-assignments`
+/// (overrides_with last-one-wins), so it can switch a config-enabled align back
+/// off for a one-off run. Exercising both flags also proves `--no-…` parses.
+#[test]
+fn no_align_assignments_flag_overrides_enable() {
+    let input = "Foo = 1;\nLonger Name = 2;\n";
+    let (out, _, code) = run_with_stdin(&["--align-assignments", "--no-align-assignments"], input);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        out, input,
+        "--no-align-assignments must override --align-assignments; got {out:?}"
+    );
+}
+
+/// `--final-blank-line` ends the buffer with one blank line (opt-in pair of
+/// m1-lint L027); the default leaves a bare trailing newline.
+#[test]
+fn final_blank_line_flag_appends_blank_line() {
+    let input = "x = 1;\n";
+    let (def_out, _, _) = run_with_stdin(&[], input);
+    assert_eq!(def_out, "x = 1;\n", "default: single trailing newline");
+
+    let (out, _, code) = run_with_stdin(&["--final-blank-line"], input);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        out, "x = 1;\n\n",
+        "--final-blank-line must end with exactly one blank line; got {out:?}"
+    );
+}
+
+/// `--reflow-comments` is accepted and parsed (opt-in #95). A short comment is
+/// never reflowed, so output is unchanged — this guards the flag wiring.
+#[test]
+fn reflow_comments_flag_is_accepted() {
+    let input = "// short\nx = 1;\n";
+    let (out, _, code) = run_with_stdin(&["--reflow-comments"], input);
+    assert_eq!(code, Some(0), "--reflow-comments must be a known flag");
+    assert_eq!(out, input, "a short comment is not reflowed");
+}

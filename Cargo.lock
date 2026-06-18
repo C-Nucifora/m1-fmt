@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "m1-fmt"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "clap",
  "libc",

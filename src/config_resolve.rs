@@ -27,6 +27,11 @@ pub struct CliOverrides {
     pub brace_style: Option<BraceStyle>,
     pub indent_width: Option<usize>,
     pub continuation_indent: Option<usize>,
+    /// Opt-in booleans (#96 / #95 / #116). `Some(true)` forces the option on,
+    /// `Some(false)` forces it off (the `--no-…` flag), `None` defers to config.
+    pub align_assignments: Option<bool>,
+    pub reflow_comments: Option<bool>,
+    pub final_blank_line: Option<bool>,
 }
 
 /// Resolve [`FormatOptions`] for a file/stdin in `dir`, layering lowest-first:
@@ -130,6 +135,15 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
     }
     if let Some(n) = overrides.continuation_indent {
         o.continuation_indent = n;
+    }
+    if let Some(b) = overrides.align_assignments {
+        o.align_assignments = b;
+    }
+    if let Some(b) = overrides.reflow_comments {
+        o.reflow_comments = b;
+    }
+    if let Some(b) = overrides.final_blank_line {
+        o.final_blank_line = b;
     }
     o
 }
@@ -254,6 +268,48 @@ mod resolve_tests {
         assert_eq!(o.brace_style, BraceStyle::Kr, "flag beats config");
         assert_eq!(o.indent_width, 2, "flag beats config");
         assert_eq!(o.continuation_indent, 3, "flag beats config");
+    }
+
+    #[test]
+    fn bool_flags_override_config_both_ways() {
+        // The opt-in booleans (align/reflow/final_blank) must be CLI-settable in
+        // both directions: a flag can force one ON when config is silent, and a
+        // `--no-` flag (Some(false)) can force one OFF when config turned it on.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nalign_assignments = true\nreflow_comments = true\nfinal_blank_line = true\n",
+        )
+        .unwrap();
+        let o = resolve_opts(
+            CliOverrides {
+                align_assignments: Some(false),
+                reflow_comments: Some(false),
+                final_blank_line: Some(false),
+                ..Default::default()
+            },
+            tmp.path(),
+        );
+        assert!(!o.align_assignments, "--no- flag beats config true");
+        assert!(!o.reflow_comments, "--no- flag beats config true");
+        assert!(!o.final_blank_line, "--no- flag beats config true");
+
+        // And ON over a silent config (default false).
+        let empty = tempfile::tempdir().unwrap();
+        let o2 = resolve_opts(
+            CliOverrides {
+                align_assignments: Some(true),
+                reflow_comments: Some(true),
+                final_blank_line: Some(true),
+                ..Default::default()
+            },
+            empty.path(),
+        );
+        assert!(o2.align_assignments && o2.reflow_comments && o2.final_blank_line);
+
+        // Absent (None) must not clobber a config that enabled them.
+        let o3 = resolve_opts(CliOverrides::default(), tmp.path());
+        assert!(o3.align_assignments && o3.reflow_comments && o3.final_blank_line);
     }
 
     #[test]

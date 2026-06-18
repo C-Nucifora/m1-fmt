@@ -59,6 +59,32 @@ struct Args {
     #[arg(long, value_name = "N")]
     continuation_indent: Option<usize>,
 
+    /// Align the `=` of contiguous runs of simple single-line assignments
+    /// (opt-in; off by default per the manual). Overrides .m1fmt.toml /
+    /// m1-tools.toml; pair with a wider --line-width so aligned rows fit.
+    #[arg(long, overrides_with = "no_align_assignments")]
+    align_assignments: bool,
+    /// Turn assignment alignment off, overriding a config that enabled it.
+    #[arg(long, hide = true, overrides_with = "align_assignments")]
+    no_align_assignments: bool,
+
+    /// Reflow over-width `//` comment lines onto continuation comments (opt-in;
+    /// split-only — short lines are never joined). Overrides .m1fmt.toml /
+    /// m1-tools.toml.
+    #[arg(long, overrides_with = "no_reflow_comments")]
+    reflow_comments: bool,
+    /// Turn comment reflow off, overriding a config that enabled it.
+    #[arg(long, hide = true, overrides_with = "reflow_comments")]
+    no_reflow_comments: bool,
+
+    /// End the file with one blank line instead of a bare newline (opt-in; the
+    /// formatter pair of m1-lint L027). Overrides .m1fmt.toml / m1-tools.toml.
+    #[arg(long, overrides_with = "no_final_blank_line")]
+    final_blank_line: bool,
+    /// Keep a bare trailing newline, overriding a config that enabled the blank.
+    #[arg(long, hide = true, overrides_with = "final_blank_line")]
+    no_final_blank_line: bool,
+
     /// Format only the given 1-based inclusive line range (`START:END`); the rest
     /// of the buffer is left byte-for-byte unchanged. The range is snapped outward
     /// to whole top-level statements. For LSP/editor format-on-selection.
@@ -144,6 +170,21 @@ fn cli_overrides(args: &Args, styles: StyleOverrides) -> config_resolve::CliOver
         brace_style: styles.brace_style,
         indent_width: args.indent_width,
         continuation_indent: args.continuation_indent,
+        align_assignments: tri_flag(args.align_assignments, args.no_align_assignments),
+        reflow_comments: tri_flag(args.reflow_comments, args.no_reflow_comments),
+        final_blank_line: tri_flag(args.final_blank_line, args.no_final_blank_line),
+    }
+}
+
+/// Fold a `--flag` / `--no-flag` pair into a tri-state override. clap's
+/// `overrides_with` guarantees at most one is set, so a `Some` always reflects
+/// the last flag the user actually passed; neither given yields `None`, which
+/// defers to the config files / default.
+fn tri_flag(yes: bool, no: bool) -> Option<bool> {
+    match (yes, no) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
     }
 }
 
