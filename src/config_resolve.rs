@@ -23,7 +23,7 @@ use std::path::Path;
 /// a handful of columns, so we cap both at a small sane maximum at
 /// option-resolution time. For tabs, `indent_width` is only the *assumed* display
 /// width used for wrap math, so a cap of 64 is harmless to real output.
-pub const MAX_INDENT_WIDTH: usize = 64;
+pub use m1_fmt::config::MAX_INDENT_WIDTH;
 
 /// Cap `value` at [`MAX_INDENT_WIDTH`], emitting a one-line stderr warning naming
 /// `knob` when it was out of range, so the user learns the input was clamped
@@ -66,83 +66,10 @@ pub struct CliOverrides {
 /// tool-specific `.m1fmt.toml` (overrides the unified file) → CLI flags. Both
 /// config files are discovered by walking up from `dir`.
 pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
-    let mut o = FormatOptions::default();
-
-    // Layer 1: the unified m1-tools.toml [format] section (lowest config layer).
-    if let Some(tc) = m1_workspace::config::M1ToolsConfig::discover(dir) {
-        let f = tc.format;
-        if let Some(n) = f.line_width {
-            o.line_width = n;
-        }
-        if let Some(n) = f.max_blank_lines {
-            o.max_blank_lines = n;
-        }
-        if let Some(n) = f.indent_width {
-            o.indent_width = n;
-        }
-        if let Some(s) = f
-            .indent_style
-            .as_deref()
-            .and_then(m1_fmt::config::parse_indent_style)
-        {
-            o.indent_style = s;
-        }
-        if let Some(s) = f
-            .brace_style
-            .as_deref()
-            .and_then(m1_fmt::config::parse_brace_style)
-        {
-            o.brace_style = s;
-        }
-        // The continuation/align/reflow knobs reached the unified [format]
-        // section in m1-workspace v0.9.0 (#25); previously they were
-        // .m1fmt.toml-only, so a unified-config-only team couldn't set them.
-        if let Some(n) = f.continuation_indent {
-            o.continuation_indent = n;
-        }
-        if let Some(b) = f.align_assignments {
-            o.align_assignments = b;
-        }
-        if let Some(b) = f.reflow_comments {
-            o.reflow_comments = b;
-        }
-        // final_blank_line reached the unified [format] section in
-        // m1-workspace v0.10.0 (#116's L027-pairing knob).
-        if let Some(b) = f.final_blank_line {
-            o.final_blank_line = b;
-        }
-    }
-
-    // Layer 2: the tool-specific .m1fmt.toml overrides the unified file.
-    if let Some(cfg) = m1_fmt::config::discover(dir) {
-        if let Some(n) = cfg.max_line_length {
-            o.line_width = n;
-        }
-        if let Some(n) = cfg.max_blank_lines {
-            o.max_blank_lines = n;
-        }
-        if let Some(n) = cfg.indent_width {
-            o.indent_width = n;
-        }
-        if let Some(s) = cfg.indent_style {
-            o.indent_style = s;
-        }
-        if let Some(s) = cfg.brace_style {
-            o.brace_style = s;
-        }
-        if let Some(n) = cfg.continuation_indent {
-            o.continuation_indent = n;
-        }
-        if let Some(b) = cfg.align_assignments {
-            o.align_assignments = b;
-        }
-        if let Some(b) = cfg.reflow_comments {
-            o.reflow_comments = b;
-        }
-        if let Some(b) = cfg.final_blank_line {
-            o.final_blank_line = b;
-        }
-    }
+    // Layers 1 (unified m1-tools.toml) + 2 (.m1fmt.toml) come from the shared
+    // library resolver, so the CLI, the LSP and the MCP server all agree on the
+    // config-file layering. This function adds only the CLI-flag layer on top.
+    let mut o = m1_fmt::config::resolve_options(dir);
 
     // Layer 3: explicit CLI flags win over everything.
     if let Some(n) = overrides.max_blank_lines {

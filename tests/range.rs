@@ -93,3 +93,22 @@ fn crlf_range_already_formatted_reports_no_change() {
         r.output
     );
 }
+
+#[test]
+fn range_warnings_use_file_line_numbers() {
+    use m1_fmt::format_str_with;
+    // The over-width comment is on file line 5 (0-based index 4).
+    let src = "X = 1;\nY = 2;\nif (A)\n{\n\t// aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n}\n";
+    let mut o = opts();
+    o.line_width = 20;
+    let r = format_range(src, 4, 4, &o).unwrap().unwrap();
+    // Sanity: the same content, formatted whole, warns on the same file line.
+    let whole = format_str_with(src, &o).unwrap();
+    assert!(!whole.warnings.is_empty(), "expected an over-width warning");
+    // The range warning must report the FILE line (5), not slice-relative (1).
+    assert!(
+        r.warnings.iter().any(|w| w.line == 5),
+        "range warnings must be file-relative, got {:?}",
+        r.warnings.iter().map(|w| w.line).collect::<Vec<_>>()
+    );
+}
