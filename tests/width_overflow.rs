@@ -41,3 +41,30 @@ fn huge_continuation_indent_does_not_panic() {
     };
     let _ = format_str_with(WRAPPING_SRC, &opts).expect("must return, not crash");
 }
+
+#[test]
+fn line_too_long_counts_tab_expanded_columns() {
+    // A long comment at depth 2 (two tabs) exceeds the width in visual columns
+    // (2*indent_width + comment) but not in raw chars, so under tab indentation
+    // it used to escape the LineTooLong warning the identical layout triggers
+    // under spaces. Tabs and spaces must now agree.
+    let src = "if (A)\n{\n\tif (B)\n\t{\n\t\t// aaaaaaaaaaaaaaaaaaaaaaaa\n\t}\n}\n";
+    let mk = |style| FormatOptions {
+        indent_width: 4,
+        line_width: 30,
+        indent_style: style,
+        ..Default::default()
+    };
+    let tab = format_str_with(src, &mk(m1_fmt::IndentStyle::Tab)).unwrap();
+    let sp = format_str_with(src, &mk(m1_fmt::IndentStyle::Spaces)).unwrap();
+    assert!(
+        !tab.warnings.is_empty(),
+        "tab-indented over-width line must warn: {:?}",
+        tab.warnings
+    );
+    assert_eq!(
+        tab.warnings.len(),
+        sp.warnings.len(),
+        "tabs and spaces must agree on line-too-long"
+    );
+}

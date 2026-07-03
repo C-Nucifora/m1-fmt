@@ -190,16 +190,21 @@ fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatEr
         {
             continue;
         }
-        if line.chars().count() > opts.line_width {
+        // Measure the line in tab-expanded display columns, not raw chars: under
+        // the default (manual-mandated) tab indentation, each `\t` occupies
+        // `indent_width` columns, so a raw char count under-reports width and a
+        // line the printer itself wrapped produces no warning. Matches the
+        // printer's own `visual_width` metric.
+        let width: usize = line
+            .chars()
+            .map(|c| if c == '\t' { opts.indent_width } else { 1 })
+            .fold(0usize, usize::saturating_add);
+        if width > opts.line_width {
             warnings.push(FormatWarning {
                 kind: diagnostics::WarningKind::LineTooLong,
                 line: line_idx + 1,
                 col: opts.line_width + 1,
-                message: format!(
-                    "line is {} characters (max {})",
-                    line.chars().count(),
-                    opts.line_width
-                ),
+                message: format!("line is {width} columns (max {})", opts.line_width),
             });
         }
     }
@@ -387,7 +392,17 @@ pub fn format_range(
         start_line,
         end_line,
         changed,
-        warnings: result.warnings,
+        // Warnings from formatting the slice carry slice-relative (1-based) line
+        // numbers; shift them by the slice's start line so an editor consumer
+        // (format-on-selection via the LSP) gets true file line numbers.
+        warnings: result
+            .warnings
+            .into_iter()
+            .map(|mut w| {
+                w.line += start_line;
+                w
+            })
+            .collect(),
     }))
 }
 

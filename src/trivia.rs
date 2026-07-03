@@ -9,16 +9,19 @@ pub struct TriviaItem {
 
 pub fn collect_trivia(cst: &Cst) -> Vec<TriviaItem> {
     let mut items = Vec::new();
-    collect_node(cst.root(), cst.source(), &mut items);
+    collect_node(cst.root(), &mut items);
     items.sort_by_key(|t| t.byte_offset);
     items
 }
 
-fn collect_node(node: Node, source: &str, out: &mut Vec<TriviaItem>) {
+fn collect_node(node: Node, out: &mut Vec<TriviaItem>) {
     if matches!(node.kind(), Kind::LineComment | Kind::BlockComment) {
         let range = node.byte_range();
         let text = node.text().to_string();
-        let source_line = source[..range.start].chars().filter(|&c| c == '\n').count();
+        // The CST already carries each node's 0-based line; use it instead of
+        // rescanning the whole source prefix for every comment (that was
+        // O(comments * file size) on the hot editor-format path).
+        let source_line = node.range().start.line as usize;
         out.push(TriviaItem {
             byte_offset: range.start,
             text,
@@ -27,7 +30,7 @@ fn collect_node(node: Node, source: &str, out: &mut Vec<TriviaItem>) {
         return;
     }
     for child in node.children() {
-        collect_node(child, source, out);
+        collect_node(child, out);
     }
 }
 
