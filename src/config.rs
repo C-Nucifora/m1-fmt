@@ -10,7 +10,91 @@
 //! Values are merged into [`crate::FormatOptions`] with precedence
 //! CLI flag > config file > built-in default.
 
+use crate::FormatOptions;
 use std::path::Path;
+
+/// Upper bound on the tab/continuation width knobs. A pathologically large value
+/// (from a committed config or a stray flag) would otherwise overflow the
+/// wrapping column math; the resolver clamps to this.
+pub const MAX_INDENT_WIDTH: usize = 64;
+
+/// Resolve the effective [`FormatOptions`] for a file in `dir` from config files
+/// alone (no CLI overrides): the unified `m1-tools.toml [format]` section
+/// (lowest layer), then the tool-specific `.m1fmt.toml`. This is the shared
+/// resolver the CLI wraps with its flag layer, and that library consumers (the
+/// LSP, the MCP server) call so they format a project with the *same* settings
+/// as the CLI/CI — e.g. honouring a `brace_style = "kr"` — instead of the
+/// hard-coded defaults.
+pub fn resolve_options(dir: &Path) -> FormatOptions {
+    let mut o = FormatOptions::default();
+
+    // Layer 1: the unified m1-tools.toml [format] section (lowest config layer).
+    if let Some(tc) = m1_workspace::config::M1ToolsConfig::discover(dir) {
+        let f = tc.format;
+        if let Some(n) = f.line_width {
+            o.line_width = n;
+        }
+        if let Some(n) = f.max_blank_lines {
+            o.max_blank_lines = n;
+        }
+        if let Some(n) = f.indent_width {
+            o.indent_width = n;
+        }
+        if let Some(s) = f.indent_style.as_deref().and_then(parse_indent_style) {
+            o.indent_style = s;
+        }
+        if let Some(s) = f.brace_style.as_deref().and_then(parse_brace_style) {
+            o.brace_style = s;
+        }
+        if let Some(n) = f.continuation_indent {
+            o.continuation_indent = n;
+        }
+        if let Some(b) = f.align_assignments {
+            o.align_assignments = b;
+        }
+        if let Some(b) = f.reflow_comments {
+            o.reflow_comments = b;
+        }
+        if let Some(b) = f.final_blank_line {
+            o.final_blank_line = b;
+        }
+    }
+
+    // Layer 2: the tool-specific .m1fmt.toml overrides the unified file.
+    if let Some(cfg) = discover(dir) {
+        if let Some(n) = cfg.max_line_length {
+            o.line_width = n;
+        }
+        if let Some(n) = cfg.max_blank_lines {
+            o.max_blank_lines = n;
+        }
+        if let Some(n) = cfg.indent_width {
+            o.indent_width = n;
+        }
+        if let Some(s) = cfg.indent_style {
+            o.indent_style = s;
+        }
+        if let Some(s) = cfg.brace_style {
+            o.brace_style = s;
+        }
+        if let Some(n) = cfg.continuation_indent {
+            o.continuation_indent = n;
+        }
+        if let Some(b) = cfg.align_assignments {
+            o.align_assignments = b;
+        }
+        if let Some(b) = cfg.reflow_comments {
+            o.reflow_comments = b;
+        }
+        if let Some(b) = cfg.final_blank_line {
+            o.final_blank_line = b;
+        }
+    }
+
+    o.indent_width = o.indent_width.min(MAX_INDENT_WIDTH);
+    o.continuation_indent = o.continuation_indent.min(MAX_INDENT_WIDTH);
+    o
+}
 
 /// Map a `brace_style` string to the enum. Accepts the documented spellings.
 /// Shared by [`parse`] and the unified `m1-tools.toml` mapping in the CLI.
@@ -106,6 +190,30 @@ pub fn discover(start: &Path) -> Option<FileConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_options_reads_unified_and_tool_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Unified config sets K&R + spaces; the tool file overrides line width.
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nbrace_style = \"kr\"\nindent_style = \"spaces\"\nindent_width = 2\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join(".m1fmt.toml"), "max_line_length = 100\n").unwrap();
+        let o = resolve_options(tmp.path());
+        assert_eq!(o.brace_style, crate::BraceStyle::Kr);
+        assert_eq!(o.indent_style, crate::IndentStyle::Spaces);
+        assert_eq!(o.indent_width, 2);
+        assert_eq!(o.line_width, 100);
+    }
+
+    #[test]
+    fn resolve_options_defaults_when_no_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let o = resolve_options(tmp.path());
+        assert_eq!(o.brace_style, FormatOptions::default().brace_style);
+    }
 
     #[test]
     fn parses_both_keys() {
