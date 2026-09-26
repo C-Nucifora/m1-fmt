@@ -262,3 +262,26 @@ fn initializer_delimiter_comments_stay_inside_the_statement() {
         }
     }
 }
+
+#[test]
+fn typed_declarations_accept_compile_time_interpolation() {
+    for ty in ["Foo$(N)", "Foo_$(N)", "Foo$(N) Bar"] {
+        let src = format!("local <{ty}> A = 1;\nlocal <{ty}> Longer = 2;\n");
+        assert_eq!(
+            formatted(&src),
+            format!("local <{ty}> A      = 1;\nlocal <{ty}> Longer = 2;\n")
+        );
+    }
+}
+
+#[test]
+fn assignment_alignment_does_not_rewrite_block_comment_contents() {
+    let src = "/*\nlocal <Foo_Bar> A = 1;\nlocal <Foo_Bar> Longer = 2;\n*/\n";
+    assert_eq!(formatted(src), src);
+}
+
+#[test]
+fn semicolons_inside_trailing_comments_do_not_break_assignment_groups() {
+    let src = "A = 1; // alpha; beta\nLonger = 2;\n";
+    assert_eq!(formatted(src), "A      = 1;  // alpha; beta\nLonger = 2;\n");
+}

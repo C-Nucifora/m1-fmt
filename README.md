@@ -90,7 +90,9 @@ The opt-in extras have flags too — `--align-assignments`, `--align-conditions`
 and `--final-blank-line` (each with a `--no-…` form to switch it back off over a
 config that enabled it). Assignment alignment lines up the `=` of contiguous
 single-line assignments and typed local declarations; pair it with a wider `--line-width` so the aligned rows
-fit (a run that would overflow the width is left un-aligned):
+fit (a run that would overflow the width is left un-aligned). Groups use parsed
+statements, including types such as `Foo$(N)`; assignment-like text inside
+comments is left alone:
 
 ```sh
 m1-fmt --align-assignments --line-width 120 -i Scripts/
