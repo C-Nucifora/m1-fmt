@@ -68,6 +68,14 @@ struct Args {
     #[arg(long, hide = true, overrides_with = "align_assignments")]
     no_align_assignments: bool,
 
+    /// Put boolean terms on separate rows and align comparison operators
+    /// (opt-in). Overrides .m1fmt.toml.
+    #[arg(long, overrides_with = "no_align_conditions")]
+    align_conditions: bool,
+    /// Turn condition alignment off, overriding a config that enabled it.
+    #[arg(long, hide = true, overrides_with = "align_conditions")]
+    no_align_conditions: bool,
+
     /// Reflow over-width `//` comment lines onto continuation comments (opt-in;
     /// split-only — short lines are never joined). Overrides .m1fmt.toml /
     /// m1-tools.toml.
@@ -171,6 +179,7 @@ fn cli_overrides(args: &Args, styles: StyleOverrides) -> config_resolve::CliOver
         indent_width: args.indent_width,
         continuation_indent: args.continuation_indent,
         align_assignments: tri_flag(args.align_assignments, args.no_align_assignments),
+        align_conditions: tri_flag(args.align_conditions, args.no_align_conditions),
         reflow_comments: tri_flag(args.reflow_comments, args.no_reflow_comments),
         final_blank_line: tri_flag(args.final_blank_line, args.no_final_blank_line),
     }

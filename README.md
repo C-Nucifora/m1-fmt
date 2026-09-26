@@ -86,15 +86,48 @@ m1-fmt --indent-style spaces --brace-style kr file.m1scr
 m1-fmt --indent-width 2 --line-width 100 --continuation-indent 2 file.m1scr
 ```
 
-The opt-in extras have flags too — `--align-assignments`, `--reflow-comments`,
+The opt-in extras have flags too — `--align-assignments`, `--align-conditions`, `--reflow-comments`,
 and `--final-blank-line` (each with a `--no-…` form to switch it back off over a
 config that enabled it). Assignment alignment lines up the `=` of contiguous
-single-line assignments; pair it with a wider `--line-width` so the aligned rows
+single-line assignments and typed local declarations; pair it with a wider `--line-width` so the aligned rows
 fit (a run that would overflow the width is left un-aligned):
 
 ```sh
 m1-fmt --align-assignments --line-width 120 -i Scripts/
 ```
+
+`--align-conditions` puts each term in a boolean condition or assignment on its
+own line, with `and` / `or` at the end of the preceding line. Consecutive
+comparisons align their operators and right-hand sides when the group fits the
+line width. Explicit parentheses stay in place and form nested groups. Embedded
+comments keep their expression's original layout; the formatter leaves those
+expressions unaligned so comments stay attached to their terms.
+
+```toml
+# .m1fmt.toml
+max_line_length = 120
+align_assignments = true
+align_conditions = true
+```
+
+```c
+local <Integer> Count  = 0;
+local <Integer> Target = 10;
+
+if (
+    Count  <  Target and
+    Status eq Ready
+)
+{
+    Enabled = true;
+}
+```
+
+The example uses spaces for display; output follows the configured indent style.
+If column padding would exceed the width, the group uses ordinary spacing and
+wrapping. Both alignment options are off by default. `align_conditions` is currently
+available in `.m1fmt.toml` and CLI flags; support in the shared `m1-tools.toml`
+schema is pending its next release.
 
 Precedence: built-in defaults < `m1-tools.toml` `[format]` < `.m1fmt.toml` <
 CLI flags. The workspace-level `m1-tools.toml` is shared with `m1-lint`,
@@ -104,7 +137,7 @@ for the full set of knobs.
 
 Beyond indentation and braces, the formatter handles operator spacing,
 line-wrapping at the width budget, and blank-line policy, with a few opt-in
-extras (assignment alignment, comment reflow). For hand-aligned tables and
+extras (assignment and condition alignment, comment reflow). For hand-aligned tables and
 other deliberate layout, `// @m1:fmt(off)` / `// @m1:fmt(on)` comments mark a
 region the formatter passes through untouched.
 

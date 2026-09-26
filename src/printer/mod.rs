@@ -13,6 +13,7 @@ use crate::trivia::{TriviaItem, collect_trivia};
 use m1_core::{Cst, Kind, Node};
 use std::collections::{HashMap, VecDeque};
 
+mod conditions;
 mod control;
 mod expressions;
 mod infra;
@@ -45,6 +46,7 @@ pub struct Printer {
     /// Extra indent levels for wrapped/continuation lines (default 1, per the
     /// manual; configurable). See [`crate::FormatOptions::continuation_indent`].
     continuation_indent: usize,
+    align_conditions: bool,
 }
 
 impl Printer {
@@ -62,6 +64,7 @@ impl Printer {
             indent_width: opts.indent_width,
             brace_style: opts.brace_style,
             continuation_indent: opts.continuation_indent,
+            align_conditions: opts.align_conditions,
         }
     }
 }
@@ -148,7 +151,7 @@ pub fn print_with(cst: &Cst, opts: &crate::FormatOptions) -> String {
         normalize::reflow_long_line_comments(&mut p.output, opts.line_width);
     }
     if opts.align_assignments {
-        normalize::align_assignment_groups(&mut p.output, opts.line_width);
+        normalize::align_assignment_groups(&mut p.output, opts.line_width, opts.indent_width);
     }
     p.output
 }

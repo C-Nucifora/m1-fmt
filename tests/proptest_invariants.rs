@@ -74,6 +74,23 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
+    fn aligned_invariants(src in fragment(), width in 40usize..161, spaces in any::<bool>()) {
+        if !m1_core::parse(&src).syntax_diagnostics().is_empty() { return Ok(()); }
+        let opts = m1_fmt::FormatOptions {
+            align_assignments: true,
+            align_conditions: true,
+            line_width: width,
+            indent_style: if spaces { m1_fmt::IndentStyle::Spaces } else { m1_fmt::IndentStyle::Tab },
+            ..Default::default()
+        };
+        let once = m1_fmt::format_str_with(&src, &opts).unwrap().output;
+        let twice = m1_fmt::format_str_with(&once, &opts).unwrap().output;
+        prop_assert!(m1_core::parse(&once).syntax_diagnostics().is_empty());
+        prop_assert_eq!(tokens(&src), tokens(&once));
+        prop_assert_eq!(once, twice);
+    }
+
+    #[test]
     fn idempotent(src in fragment()) {
         if !m1_core::parse(&src).syntax_diagnostics().is_empty() {
             return Ok(());

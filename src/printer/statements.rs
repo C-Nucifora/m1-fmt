@@ -121,7 +121,13 @@ impl Printer {
                 // The value expression (any expression kind, including a bare
                 // identifier once we are past the `=`).
                 _ => {
-                    self.emit_expr(child);
+                    if seen_assign && self.condition_layout_enabled(child) {
+                        self.output
+                            .truncate(self.output.trim_end_matches(' ').len());
+                        self.emit_condition_rhs(child);
+                    } else {
+                        self.emit_expr(child);
+                    }
                 }
             }
         }
@@ -185,6 +191,10 @@ impl Printer {
     /// assignments whose RHS wraps internally (long call args, binary chains) are
     /// untouched.
     fn emit_rhs_with_last_resort_break(&mut self, rhs: Node) {
+        if self.condition_layout_enabled(rhs) {
+            self.emit_condition_rhs(rhs);
+            return;
+        }
         let op_col = self.current_col(); // column right after the operator
         let inline_col = op_col + 1; // adds the " " separator
         let cont_col = self.continuation_col();

@@ -209,7 +209,7 @@ pub(super) fn ensure_blank_after_top_level_when(output: &mut String) {
 /// trailing comment): plain `=` only — a compound operator, a multi-line
 /// statement, a comment line or a blank breaks the run. A group is skipped
 /// entirely if aligning would push any member past `width`.
-pub(super) fn align_assignment_groups(output: &mut String, width: usize) {
+pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_width: usize) {
     #[derive(Clone)]
     struct Member {
         index: usize,
@@ -232,9 +232,23 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize) {
         {
             return None;
         }
-        if !trimmed_lhs
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '_' | '$' | '(' | ')'))
+        // A typed declaration has a type prefix before its object name.
+        // Strip only that prefix for validation; retain it in the aligned text.
+        let name = trimmed_lhs.strip_prefix("static ").unwrap_or(trimmed_lhs);
+        let name = name.strip_prefix("local ").unwrap_or(name);
+        let name = if let Some(typed) = name.strip_prefix('<') {
+            let (ty, rest) = typed.split_once('>')?;
+            if ty.is_empty() || !ty.chars().all(|c| c.is_alphanumeric() || c == ' ') {
+                return None;
+            }
+            rest.trim_start()
+        } else {
+            name
+        };
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '_' | '$' | '(' | ')'))
         {
             return None;
         }
@@ -260,7 +274,12 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize) {
             let fits = group.iter().all(|m| {
                 let line = &rewritten[m.index];
                 let content = line.strip_suffix('\n').unwrap_or(line);
-                content.chars().count() + (target - m.lhs_width) <= width
+                content
+                    .chars()
+                    .map(|c| if c == '\t' { indent_width } else { 1 })
+                    .sum::<usize>()
+                    + (target - m.lhs_width)
+                    <= width
             });
             if fits {
                 for m in group.iter() {

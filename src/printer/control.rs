@@ -146,7 +146,16 @@ impl Printer {
                         // condition, so the wrap decision accounts for it.
                         let saved = self.width;
                         self.width = self.width.saturating_sub(self.close_paren_reserve());
-                        self.emit_expr(child);
+                        if self.condition_layout_enabled(child) {
+                            self.emit_newline();
+                            self.indent += 1;
+                            self.emit_condition_rows(child);
+                            self.indent -= 1;
+                            self.emit_newline();
+                            self.emit_indent();
+                        } else {
+                            self.emit_expr(child);
+                        }
                         self.width = saved;
                     }
                 }
