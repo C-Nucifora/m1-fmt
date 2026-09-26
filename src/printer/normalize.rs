@@ -209,102 +209,115 @@ pub(super) fn ensure_blank_after_top_level_when(output: &mut String) {
 /// trailing comment): plain `=` only — a compound operator, a multi-line
 /// statement, a comment line or a blank breaks the run. A group is skipped
 /// entirely if aligning would push any member past `width`.
-pub(super) fn align_assignment_groups(output: &mut String, width: usize) {
-    #[derive(Clone)]
-    struct Member {
-        index: usize,
-        lhs_width: usize, // chars in the trimmed LHS
+pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_width: usize) {
+    use m1_core::Kind;
+
+    #[derive(Clone, Copy)]
+    struct Member<'a> {
+        indent: &'a str,
+        lhs: &'a str,
+        rest: &'a str,
+        lhs_width: usize,
     }
 
-    /// `Some((indent, lhs, rest))` when the line is a simple assignment.
-    fn split_simple(line: &str) -> Option<(&str, &str, &str)> {
-        let content = line.strip_suffix('\n').unwrap_or(line);
-        let indent_len = content.len() - content.trim_start_matches(['\t', ' ']).len();
-        let (indent, body) = content.split_at(indent_len);
-        let eq = body.find(" = ")?;
-        let lhs = &body[..eq];
-        let rest = &body[eq + 3..];
-        // Plain `=` only: the LHS must not end with an operator character
-        // (compound assignment) and must look like an object path.
-        let trimmed_lhs = lhs.trim_end();
-        if trimmed_lhs.is_empty()
-            || trimmed_lhs.ends_with(['+', '-', '*', '/', '%', '&', '|', '^', '<', '>', '!'])
-        {
-            return None;
+    // Use the grammar to identify complete statements and their plain `=`.
+    // A character whitelist cannot describe M1 identifiers, which can contain
+    // spaces and compile-time interpolation. Parsing the whole output also
+    // keeps assignment-shaped text inside comments out of these groups.
+    let cst = m1_core::parse(output);
+    if !cst.syntax_diagnostics().is_empty() {
+        return;
+    }
+    let lines: Vec<&str> = output.split_inclusive('\n').collect();
+    let offsets: Vec<usize> = lines
+        .iter()
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some(start)
+        })
+        .collect();
+    let mut members = vec![None; lines.len()];
+    let mut pending = vec![cst.root()];
+    while let Some(node) = pending.pop() {
+        if !matches!(
+            node.kind(),
+            Kind::AssignmentStatement | Kind::LocalDeclaration
+        ) {
+            pending.extend(node.children());
+            continue;
         }
-        if !trimmed_lhs
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '_' | '$' | '(' | ')'))
-        {
-            return None;
+        if node.text().contains('\n') {
+            continue;
         }
-        // Single-line statement: the rest must close with `;` (a trailing
-        // comment after it is fine).
-        let semi = rest.rfind(';')?;
-        let after = rest[semi + 1..].trim_start();
-        if !(after.is_empty() || after.starts_with("//")) {
-            return None;
+        let Some(assign) = node
+            .children()
+            .into_iter()
+            .find(|child| child.kind() == Kind::Assign)
+        else {
+            continue;
+        };
+        let span = node.byte_range();
+        let index = offsets.partition_point(|&offset| offset <= span.start) - 1;
+        let offset = offsets[index];
+        let line = lines[index];
+        let indent = &line[..span.start - offset];
+        // A comment or another statement sharing the line breaks the group.
+        if !indent.chars().all(|c| matches!(c, ' ' | '\t')) {
+            continue;
         }
-        Some((indent, lhs, rest))
+        let after = line[span.end - offset..].trim();
+        if !after.is_empty() && !after.starts_with("//") {
+            continue;
+        }
+        let lhs = line[span.start - offset..assign.byte_range().start - offset].trim_end();
+        let rest = line[assign.byte_range().end - offset..].trim_start_matches(' ');
+        members[index] = Some(Member {
+            indent,
+            lhs,
+            rest,
+            lhs_width: lhs.chars().count(),
+        });
     }
 
-    let lines: Vec<String> = output.split_inclusive('\n').map(str::to_string).collect();
-    let mut rewritten = lines.clone();
-    let mut group: Vec<Member> = Vec::new();
-    let mut group_indent: Option<String> = None;
-
-    let flush = |group: &mut Vec<Member>, rewritten: &mut Vec<String>, width: usize| {
-        if group.len() >= 2 {
-            let target = group.iter().map(|m| m.lhs_width).max().unwrap_or(0);
-            // Skip the whole group if padding would overflow any line.
-            let fits = group.iter().all(|m| {
-                let line = &rewritten[m.index];
-                let content = line.strip_suffix('\n').unwrap_or(line);
-                content.chars().count() + (target - m.lhs_width) <= width
-            });
-            if fits {
-                for m in group.iter() {
-                    let line = rewritten[m.index].clone();
-                    let (head, tail) = (
-                        line.strip_suffix('\n').map(|_| "\n").unwrap_or(""),
-                        line.strip_suffix('\n').unwrap_or(&line).to_string(),
-                    );
-                    if let Some((indent, lhs, rest)) = split_simple(&tail) {
-                        let pad = " ".repeat(target - lhs.trim_end().chars().count());
-                        rewritten[m.index] =
-                            format!("{indent}{}{pad} = {rest}{head}", lhs.trim_end());
-                    }
-                }
-            }
-        }
-        group.clear();
+    let visual_width = |text: &str| {
+        text.chars()
+            .map(|c| if c == '\t' { indent_width } else { 1 })
+            .fold(0usize, usize::saturating_add)
     };
-
-    for (i, line) in lines.iter().enumerate() {
-        match split_simple(line) {
-            Some((indent, lhs, _)) if group_indent.as_deref().is_none_or(|gi| gi == indent) => {
-                group_indent = Some(indent.to_string());
-                group.push(Member {
-                    index: i,
-                    lhs_width: lhs.trim_end().chars().count(),
-                });
-            }
-            Some((indent, lhs, _)) => {
-                // Different indentation: close the old run, start a new one.
-                flush(&mut group, &mut rewritten, width);
-                group_indent = Some(indent.to_string());
-                group.push(Member {
-                    index: i,
-                    lhs_width: lhs.trim_end().chars().count(),
-                });
-            }
-            None => {
-                flush(&mut group, &mut rewritten, width);
-                group_indent = None;
+    let mut rewritten: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    let mut start = 0;
+    while start < members.len() {
+        let Some(first) = members[start] else {
+            start += 1;
+            continue;
+        };
+        let end = (start + 1..members.len())
+            .find(|&i| members[i].is_none_or(|member| member.indent != first.indent))
+            .unwrap_or(members.len());
+        let group = &members[start..end];
+        let target = group
+            .iter()
+            .flatten()
+            .map(|member| member.lhs_width)
+            .max()
+            .unwrap();
+        let fits = group.iter().flatten().all(|member| {
+            visual_width(member.indent)
+                .saturating_add(target)
+                .saturating_add(3) // " = "
+                .saturating_add(visual_width(member.rest.trim_end_matches('\n')))
+                <= width
+        });
+        if group.len() >= 2 && fits {
+            for (i, member) in group.iter().flatten().enumerate() {
+                let pad = " ".repeat(target - member.lhs_width);
+                rewritten[start + i] =
+                    format!("{}{}{pad} = {}", member.indent, member.lhs, member.rest);
             }
         }
+        start = end;
     }
-    flush(&mut group, &mut rewritten, width);
     *output = rewritten.concat();
 }
 

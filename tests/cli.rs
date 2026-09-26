@@ -801,3 +801,30 @@ fn stdin_filename_drives_config_discovery() {
         "--stdin-filename must locate the project .m1fmt.toml (kr braces); got {out:?}"
     );
 }
+
+#[test]
+fn condition_alignment_flags_override_config_and_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sample.m1scr");
+    std::fs::write(&file, "if (A eq 1 and Longer neq 2) { X = 0; }\n").unwrap();
+    std::fs::write(dir.path().join(".m1fmt.toml"), "align_conditions = true\n").unwrap();
+    for (flags, aligned) in [
+        (vec![], true),
+        (vec!["--no-align-conditions"], false),
+        (vec!["--no-align-conditions", "--align-conditions"], true),
+        (vec!["--align-conditions", "--no-align-conditions"], false),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
+            .args(flags)
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .starts_with("if (\n"),
+            aligned
+        );
+    }
+}

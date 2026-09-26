@@ -11,6 +11,13 @@ impl Printer {
     // ---- Expressions ------------------------------------------------------
 
     pub(super) fn emit_expr(&mut self, node: Node) {
+        // Preserve commented boolean expressions in place when alignment is on.
+        // The ordinary flat printer defers trivia until after the expression,
+        // which would detach these comments and change layout on a second pass.
+        if self.commented_condition(node) {
+            self.preserve_commented_condition(node);
+            return;
+        }
         match node.kind() {
             Kind::Identifier | Kind::Number | Kind::String | Kind::Boolean => {
                 self.emit(node.text());

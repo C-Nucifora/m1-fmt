@@ -57,6 +57,7 @@ pub struct CliOverrides {
     /// Opt-in booleans (#96 / #95 / #116). `Some(true)` forces the option on,
     /// `Some(false)` forces it off (the `--no-…` flag), `None` defers to config.
     pub align_assignments: Option<bool>,
+    pub align_conditions: Option<bool>,
     pub reflow_comments: Option<bool>,
     pub final_blank_line: Option<bool>,
 }
@@ -92,6 +93,9 @@ pub fn resolve_opts(overrides: CliOverrides, dir: &Path) -> FormatOptions {
     }
     if let Some(b) = overrides.align_assignments {
         o.align_assignments = b;
+    }
+    if let Some(b) = overrides.align_conditions {
+        o.align_conditions = b;
     }
     if let Some(b) = overrides.reflow_comments {
         o.reflow_comments = b;

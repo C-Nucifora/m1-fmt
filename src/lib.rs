@@ -36,6 +36,8 @@ pub struct FormatOptions {
     /// assignments. Not a manual mandate (the real corpora use it), so off by
     /// default per the defaults-follow-the-manual policy.
     pub align_assignments: bool,
+    /// Opt-in: one boolean term per row, with aligned comparison operators.
+    pub align_conditions: bool,
     /// Opt-in (#95): split over-width `//` comment lines onto continuation
     /// comment lines. Split-only — authored short lines are never joined, and
     /// `///`-doc / `@m1:` annotation lines are never touched.
@@ -58,6 +60,7 @@ impl Default for FormatOptions {
             brace_style: BraceStyle::default(),
             continuation_indent: 1,
             align_assignments: false,
+            align_conditions: false,
             reflow_comments: false,
             final_blank_line: false,
         }

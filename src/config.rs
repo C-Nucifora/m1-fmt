@@ -83,6 +83,9 @@ pub fn resolve_options(dir: &Path) -> FormatOptions {
         if let Some(b) = cfg.align_assignments {
             o.align_assignments = b;
         }
+        if let Some(b) = cfg.align_conditions {
+            o.align_conditions = b;
+        }
         if let Some(b) = cfg.reflow_comments {
             o.reflow_comments = b;
         }
@@ -127,6 +130,8 @@ pub struct FileConfig {
     pub continuation_indent: Option<usize>,
     /// Maps to `FormatOptions::align_assignments` (opt-in, #96).
     pub align_assignments: Option<bool>,
+    /// Maps to `FormatOptions::align_conditions` (opt-in).
+    pub align_conditions: Option<bool>,
     /// Maps to `FormatOptions::reflow_comments` (opt-in, #95).
     pub reflow_comments: Option<bool>,
     /// Maps to `FormatOptions::final_blank_line` (opt-in, #116).
@@ -163,6 +168,7 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
         indent_width: uint("indent_width"),
         continuation_indent: uint("continuation_indent"),
         align_assignments: value.get("align_assignments").and_then(|v| v.as_bool()),
+        align_conditions: value.get("align_conditions").and_then(|v| v.as_bool()),
         reflow_comments: value.get("reflow_comments").and_then(|v| v.as_bool()),
         final_blank_line: value.get("final_blank_line").and_then(|v| v.as_bool()),
     })
@@ -213,6 +219,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let o = resolve_options(tmp.path());
         assert_eq!(o.brace_style, FormatOptions::default().brace_style);
+    }
+
+    #[test]
+    fn condition_alignment_config_is_opt_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!resolve_options(tmp.path()).align_conditions);
+        std::fs::write(tmp.path().join(".m1fmt.toml"), "align_conditions = true\n").unwrap();
+        assert!(resolve_options(tmp.path()).align_conditions);
+        std::fs::write(tmp.path().join(".m1fmt.toml"), "align_conditions = false\n").unwrap();
+        assert!(!resolve_options(tmp.path()).align_conditions);
     }
 
     #[test]

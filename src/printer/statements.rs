@@ -94,6 +94,7 @@ impl Printer {
         // already supplies its own spacing) and reserve the `Identifier` arm for
         // the declared name only (#125).
         let mut seen_assign = false;
+        let mut preserved_rhs = false;
         for child in node.children() {
             match child.kind() {
                 Kind::Static => {
@@ -111,7 +112,12 @@ impl Printer {
                     self.emit(child.text());
                 }
                 Kind::Assign => {
-                    self.emit(" = ");
+                    self.emit(" =");
+                    preserved_rhs =
+                        self.emit_commented_between(node, Kind::Assign, Kind::Semicolon);
+                    if !preserved_rhs {
+                        self.emit(" ");
+                    }
                     seen_assign = true;
                 }
                 Kind::Semicolon => {
@@ -121,7 +127,16 @@ impl Printer {
                 // The value expression (any expression kind, including a bare
                 // identifier once we are past the `=`).
                 _ => {
-                    self.emit_expr(child);
+                    if seen_assign && preserved_rhs {
+                        continue;
+                    }
+                    if seen_assign && self.condition_layout_enabled(child) {
+                        self.output
+                            .truncate(self.output.trim_end_matches(' ').len());
+                        self.emit_condition_rhs(child);
+                    } else {
+                        self.emit_expr(child);
+                    }
                 }
             }
         }
@@ -141,6 +156,7 @@ impl Printer {
     pub(super) fn print_assignment(&mut self, node: Node) {
         // target operator value ;
         let mut seen_op = false;
+        let mut preserved_rhs = false;
         for child in node.children() {
             match child.kind() {
                 // Plain `=` plus the compound assignments (`+=`, `<<=`, …). The
@@ -150,11 +166,15 @@ impl Printer {
                 Kind::Assign => {
                     self.emit(" ");
                     self.emit(child.text());
+                    preserved_rhs =
+                        self.emit_commented_between(node, child.kind(), Kind::Semicolon);
                     seen_op = true;
                 }
                 k if m1_core::is_compound_assign(k) => {
                     self.emit(" ");
                     self.emit(child.text());
+                    preserved_rhs =
+                        self.emit_commented_between(node, child.kind(), Kind::Semicolon);
                     seen_op = true;
                 }
                 Kind::Semicolon => self.emit(";"),
@@ -164,7 +184,9 @@ impl Printer {
                 // wrapping, break after `=` and emit it on a tab-indented
                 // continuation line as a last resort (#127).
                 _ if seen_op => {
-                    self.emit_rhs_with_last_resort_break(child);
+                    if !preserved_rhs {
+                        self.emit_rhs_with_last_resort_break(child);
+                    }
                     seen_op = false;
                 }
                 _ => self.emit_expr(child),
@@ -185,6 +207,10 @@ impl Printer {
     /// assignments whose RHS wraps internally (long call args, binary chains) are
     /// untouched.
     fn emit_rhs_with_last_resort_break(&mut self, rhs: Node) {
+        if self.condition_layout_enabled(rhs) {
+            self.emit_condition_rhs(rhs);
+            return;
+        }
         let op_col = self.current_col(); // column right after the operator
         let inline_col = op_col + 1; // adds the " " separator
         let cont_col = self.continuation_col();
