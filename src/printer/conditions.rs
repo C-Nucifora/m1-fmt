@@ -37,6 +37,33 @@ fn rows<'a>(node: Node<'a>, out: &mut Vec<(Node<'a>, String)>) {
 }
 
 impl Printer {
+    /// Preserve the full interior, including comments outside the expression's
+    /// CST span, such as `if (/* guard */ A and B /* tail */)`.
+    pub(super) fn emit_commented_between(
+        &mut self,
+        node: Node<'_>,
+        open: Kind,
+        close: Kind,
+    ) -> bool {
+        if !self.align_conditions {
+            return false;
+        }
+        let Some(left) = self.find_child_of_kind(node, open) else {
+            return false;
+        };
+        let Some(right) = self.find_child_of_kind(node, close) else {
+            return false;
+        };
+        let span = left.byte_range().end..right.byte_range().start;
+        if !self.trivia.iter().any(|t| span.contains(&t.byte_offset)) {
+            return false;
+        }
+        let offset = node.byte_range().start;
+        self.emit(&node.text()[span.start - offset..span.end - offset]);
+        self.trivia.retain(|t| !span.contains(&t.byte_offset));
+        true
+    }
+
     pub(super) fn condition_layout_enabled(&self, node: Node<'_>) -> bool {
         // Embedded comments need their existing trivia placement. Do not move
         // them to different boolean terms just to produce aligned columns.

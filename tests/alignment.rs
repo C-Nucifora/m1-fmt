@@ -220,3 +220,45 @@ fn aligned_corpus_preserves_tokens_and_is_idempotent() {
         }
     }
 }
+
+#[test]
+fn typed_declarations_accept_identifier_characters_in_types() {
+    assert_eq!(
+        formatted("local <Foo_Bar> A = 1;\nlocal <Foo_Bar> Longer = 2;\n"),
+        "local <Foo_Bar> A      = 1;\nlocal <Foo_Bar> Longer = 2;\n"
+    );
+}
+
+#[test]
+fn condition_delimiter_comments_stay_inside_the_parentheses() {
+    for condition in [
+        "/* guard */ A eq 1 and B eq 2",
+        "A eq 1 and B eq 2 /* guard */",
+        "// guard\nA eq 1 and B eq 2",
+        "A eq 1 and B eq 2 // guard\n",
+        "(/* guard */ A eq 1 and B eq 2) or C eq 3",
+        "(A eq 1 and B eq 2 /* guard */) or C eq 3",
+    ] {
+        let src = format!("if ({condition}) {{ X = 0; }}\n");
+        let result = formatted(&src);
+        assert!(
+            result.contains(&format!("if ({condition})")),
+            "commented condition changed: {result}"
+        );
+    }
+}
+
+#[test]
+fn initializer_delimiter_comments_stay_inside_the_statement() {
+    for prefix in ["local <Boolean> Ready", "Ready"] {
+        for value in [
+            "/* guard */ A eq 1 and B eq 2",
+            "A eq 1 and B eq 2 /* guard */",
+            "// guard\nA eq 1 and B eq 2",
+            "A eq 1 and B eq 2 // guard\n",
+        ] {
+            let src = format!("{prefix} = {value};\n");
+            assert_eq!(formatted(&src), src);
+        }
+    }
+}

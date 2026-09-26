@@ -238,7 +238,11 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_
         let name = name.strip_prefix("local ").unwrap_or(name);
         let name = if let Some(typed) = name.strip_prefix('<') {
             let (ty, rest) = typed.split_once('>')?;
-            if ty.is_empty() || !ty.chars().all(|c| c.is_alphanumeric() || c == ' ') {
+            if ty.is_empty()
+                || !ty
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '$'))
+            {
                 return None;
             }
             rest.trim_start()

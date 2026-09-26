@@ -127,6 +127,7 @@ impl Printer {
     pub(super) fn print_if(&mut self, node: Node) {
         // `if` `(` condition `)` block else_clause?
         self.emit("if (");
+        let preserved_condition = self.emit_commented_between(node, Kind::LParen, Kind::RParen);
         let mut seen_lparen = false;
         for child in node.children() {
             match child.kind() {
@@ -141,7 +142,7 @@ impl Printer {
                 Kind::ElseClause => self.print_else_clause(child),
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {
-                    if seen_lparen {
+                    if seen_lparen && !preserved_condition {
                         // Reserve room for the trailing `) {` that follows the
                         // condition, so the wrap decision accounts for it.
                         let saved = self.width;
