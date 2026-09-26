@@ -828,3 +828,31 @@ fn condition_alignment_flags_override_config_and_each_other() {
         );
     }
 }
+
+#[test]
+fn condition_alignment_cli_uses_unified_config_and_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let scripts = dir.path().join("Scripts");
+    std::fs::create_dir(&scripts).unwrap();
+    let file = scripts.join("sample.m1scr");
+    std::fs::write(&file, "if (A eq 1 and Longer neq 2) { X = 0; }\n").unwrap();
+    std::fs::write(
+        dir.path().join("m1-tools.toml"),
+        "[format]\nalign_conditions = true\n",
+    )
+    .unwrap();
+    let format = |flags: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
+            .args(flags)
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    assert!(format(&[]).starts_with("if (\n"));
+    assert!(format(&["--no-align-conditions"]).starts_with("if (A eq 1"));
+    std::fs::write(dir.path().join(".m1fmt.toml"), "align_conditions = false\n").unwrap();
+    assert!(format(&[]).starts_with("if (A eq 1"));
+    assert!(format(&["--align-conditions"]).starts_with("if (\n"));
+}

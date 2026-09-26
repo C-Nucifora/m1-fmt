@@ -69,7 +69,7 @@ struct Args {
     no_align_assignments: bool,
 
     /// Put boolean terms on separate rows and align comparison operators
-    /// (opt-in). Overrides .m1fmt.toml.
+    /// (opt-in). Overrides .m1fmt.toml / m1-tools.toml.
     #[arg(long, overrides_with = "no_align_conditions")]
     align_conditions: bool,
     /// Turn condition alignment off, overriding a config that enabled it.

@@ -52,6 +52,9 @@ pub fn resolve_options(dir: &Path) -> FormatOptions {
         if let Some(b) = f.align_assignments {
             o.align_assignments = b;
         }
+        if let Some(b) = f.align_conditions {
+            o.align_conditions = b;
+        }
         if let Some(b) = f.reflow_comments {
             o.reflow_comments = b;
         }
@@ -219,6 +222,32 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let o = resolve_options(tmp.path());
         assert_eq!(o.brace_style, FormatOptions::default().brace_style);
+    }
+
+    #[test]
+    fn condition_alignment_resolves_unified_config_and_tool_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = tmp.path().join("Scripts");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nline_width = 120\nalign_assignments = true\nalign_conditions = true\n",
+        )
+        .unwrap();
+        let opts = resolve_options(&nested);
+        assert!(opts.align_conditions);
+        assert!(opts.align_assignments);
+        assert_eq!(opts.line_width, 120);
+        // A tool-specific false must override a workspace true.
+        std::fs::write(tmp.path().join(".m1fmt.toml"), "align_conditions = false\n").unwrap();
+        assert!(!resolve_options(&nested).align_conditions);
+        std::fs::remove_file(tmp.path().join(".m1fmt.toml")).unwrap();
+        std::fs::write(
+            tmp.path().join("m1-tools.toml"),
+            "[format]\nalign_conditions = false\n",
+        )
+        .unwrap();
+        assert!(!resolve_options(&nested).align_conditions);
     }
 
     #[test]

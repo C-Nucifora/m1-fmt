@@ -106,8 +106,9 @@ comments keep their expression's original layout; the formatter leaves those
 expressions unaligned so comments stay attached to their terms.
 
 ```toml
-# .m1fmt.toml
-max_line_length = 120
+# m1-tools.toml
+[format]
+line_width = 120
 align_assignments = true
 align_conditions = true
 ```
@@ -127,9 +128,9 @@ if (
 
 The example uses spaces for display; output follows the configured indent style.
 If column padding would exceed the width, the group uses ordinary spacing and
-wrapping. Both alignment options are off by default. `align_conditions` is currently
-available in `.m1fmt.toml` and CLI flags; support in the shared `m1-tools.toml`
-schema is pending its next release.
+wrapping. Both alignment options are off by default. Both config files support
+`align_conditions`; `.m1fmt.toml` and CLI flags override the shared workspace
+setting.
 
 Precedence: built-in defaults < `m1-tools.toml` `[format]` < `.m1fmt.toml` <
 CLI flags. The workspace-level `m1-tools.toml` is shared with `m1-lint`,
