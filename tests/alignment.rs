@@ -19,6 +19,33 @@ fn typed_declarations_align() {
 }
 
 #[test]
+fn counter_updates_do_not_align_with_their_declarations() {
+    for declaration in ["local <Integer>", "static local <Integer>"] {
+        let expected = format!("{declaration} i = -1;\ni = i eq 199 ? 0 : i + 1;\n");
+        assert_eq!(formatted(&expected), expected);
+        let padded =
+            format!("{declaration} i = -1;\ni                        = i eq 199 ? 0 : i + 1;\n");
+        assert_eq!(formatted(&padded), expected);
+    }
+}
+
+#[test]
+fn declarations_and_assignments_form_separate_alignment_groups() {
+    assert_eq!(
+        formatted(concat!(
+            "A = 1;\nLonger = 2;\n",
+            "local <Integer> B = 3;\nlocal <Integer> Longest = 4;\n",
+            "C = 5;\nMedium = 6;\n",
+        )),
+        concat!(
+            "A      = 1;\nLonger = 2;\n",
+            "local <Integer> B       = 3;\nlocal <Integer> Longest = 4;\n",
+            "C      = 5;\nMedium = 6;\n",
+        )
+    );
+}
+
+#[test]
 fn comparisons_have_their_own_rows_and_columns() {
     assert_eq!(
         formatted("if (A eq 1 and Longer neq 2) { X = 0; }\n"),

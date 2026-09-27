@@ -201,7 +201,8 @@ pub(super) fn ensure_blank_after_top_level_when(output: &mut String) {
 }
 
 /// Opt-in `align_assignments` (#96): align the `=` of each contiguous run of
-/// two or more simple single-line assignments at the same indentation. The
+/// two or more simple single-line assignments or local declarations at the
+/// same indentation. Declarations and assignments form separate groups. The
 /// manual does not mandate column alignment, so this ships off by default; the
 /// real corpora use it heavily.
 ///
@@ -214,6 +215,7 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_
 
     #[derive(Clone, Copy)]
     struct Member<'a> {
+        kind: Kind,
         indent: &'a str,
         lhs: &'a str,
         rest: &'a str,
@@ -273,6 +275,7 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_
         let lhs = line[span.start - offset..assign.byte_range().start - offset].trim_end();
         let rest = line[assign.byte_range().end - offset..].trim_start_matches(' ');
         members[index] = Some(Member {
+            kind: node.kind(),
             indent,
             lhs,
             rest,
@@ -293,7 +296,10 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_
             continue;
         };
         let end = (start + 1..members.len())
-            .find(|&i| members[i].is_none_or(|member| member.indent != first.indent))
+            .find(|&i| {
+                members[i]
+                    .is_none_or(|member| member.indent != first.indent || member.kind != first.kind)
+            })
             .unwrap_or(members.len());
         let group = &members[start..end];
         let target = group

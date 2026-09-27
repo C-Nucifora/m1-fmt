@@ -1,6 +1,6 @@
 [package]
 name = "m1-fmt"
-version = "0.18.0"
+version = "0.18.1"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -32,4 +32,3 @@ tempfile = "3"
 
 [profile.release]
 opt-level = 3
-
