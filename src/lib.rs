@@ -36,7 +36,7 @@ pub struct FormatOptions {
     /// assignments. Not a manual mandate (the real corpora use it), so off by
     /// default per the defaults-follow-the-manual policy.
     pub align_assignments: bool,
-    /// Opt-in: one boolean term per row, with aligned comparison operators.
+    /// Opt-in: align comparison operators in conditions that exceed the line width.
     pub align_conditions: bool,
     /// Opt-in (#95): split over-width `//` comment lines onto continuation
     /// comment lines. Split-only — authored short lines are never joined, and

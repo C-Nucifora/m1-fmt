@@ -68,7 +68,7 @@ struct Args {
     #[arg(long, hide = true, overrides_with = "align_assignments")]
     no_align_assignments: bool,
 
-    /// Put boolean terms on separate rows and align comparison operators
+    /// Align comparison operators in boolean expressions that exceed the line width
     /// (opt-in). Overrides .m1fmt.toml / m1-tools.toml.
     #[arg(long, overrides_with = "no_align_conditions")]
     align_conditions: bool,

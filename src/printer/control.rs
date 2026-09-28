@@ -146,8 +146,13 @@ impl Printer {
                         // Reserve room for the trailing `) {` that follows the
                         // condition, so the wrap decision accounts for it.
                         let saved = self.width;
+                        let saved_reserve = self.eol_reserve;
+                        // A trailing statement comment follows the block, not this header.
+                        self.eol_reserve = 0;
                         self.width = self.width.saturating_sub(self.close_paren_reserve());
-                        if self.condition_layout_enabled(child) {
+                        if self.condition_needs_rows(child, self.current_col()) {
+                            // The closing parenthesis is now on its own row.
+                            self.width = saved;
                             self.emit_newline();
                             self.indent += 1;
                             self.emit_condition_rows(child);
@@ -158,6 +163,7 @@ impl Printer {
                             self.emit_expr(child);
                         }
                         self.width = saved;
+                        self.eol_reserve = saved_reserve;
                     }
                 }
             }

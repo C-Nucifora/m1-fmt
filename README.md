@@ -100,10 +100,11 @@ comments is left alone:
 m1-fmt --align-assignments --line-width 120 -i Scripts/
 ```
 
-`--align-conditions` puts each term in a boolean condition or assignment on its
-own line, with `and` / `or` at the end of the preceding line. Consecutive
+`--align-conditions` keeps boolean conditions and assignments inline when the
+whole line fits. Longer expressions split into rows, with `and` / `or` at the
+end of the preceding line. Consecutive
 comparisons align their operators and right-hand sides when the group fits the
-line width. Explicit parentheses stay in place and form nested groups. Embedded
+line width. Parenthesized groups stay inline when they fit their row. Embedded
 comments keep their expression's original layout; the formatter leaves those
 expressions unaligned so comments stay attached to their terms.
 
@@ -119,10 +120,7 @@ align_conditions = true
 local <Integer> Count  = 0;
 local <Integer> Target = 10;
 
-if (
-    Count  <  Target and
-    Status eq Ready
-)
+if (Count < Target and Status eq Ready)
 {
     Enabled = true;
 }
