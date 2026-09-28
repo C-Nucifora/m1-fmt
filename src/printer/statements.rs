@@ -130,7 +130,7 @@ impl Printer {
                     if seen_assign && preserved_rhs {
                         continue;
                     }
-                    if seen_assign && self.condition_layout_enabled(child) {
+                    if seen_assign && self.condition_needs_rows(child, self.current_col()) {
                         self.output
                             .truncate(self.output.trim_end_matches(' ').len());
                         self.emit_condition_rhs(child);
@@ -207,7 +207,7 @@ impl Printer {
     /// assignments whose RHS wraps internally (long call args, binary chains) are
     /// untouched.
     fn emit_rhs_with_last_resort_break(&mut self, rhs: Node) {
-        if self.condition_layout_enabled(rhs) {
+        if self.condition_needs_rows(rhs, self.current_col() + 1) {
             self.emit_condition_rhs(rhs);
             return;
         }

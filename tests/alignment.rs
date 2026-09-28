@@ -1,10 +1,14 @@
 use m1_fmt::{FormatOptions, format_str_with};
 
 fn formatted(src: &str) -> String {
+    formatted_at_width(src, 120)
+}
+
+fn formatted_at_width(src: &str, line_width: usize) -> String {
     let opts = FormatOptions {
         align_assignments: true,
         align_conditions: true,
-        line_width: 120,
+        line_width,
         ..Default::default()
     };
     checked(src, &opts)
@@ -48,7 +52,7 @@ fn declarations_and_assignments_form_separate_alignment_groups() {
 #[test]
 fn comparisons_have_their_own_rows_and_columns() {
     assert_eq!(
-        formatted("if (A eq 1 and Longer neq 2) { X = 0; }\n"),
+        formatted_at_width("if (A eq 1 and Longer neq 2) { X = 0; }\n", 24),
         "if (\n\tA      eq  1 and\n\tLonger neq 2\n)\n{\n\tX = 0;\n}\n"
     );
 }
@@ -56,7 +60,7 @@ fn comparisons_have_their_own_rows_and_columns() {
 #[test]
 fn boolean_initializer_keeps_comparisons_together() {
     assert_eq!(
-        formatted("local <Boolean> Ready = A > 0 and Longer >= 1;\n"),
+        formatted_at_width("local <Boolean> Ready = A > 0 and Longer >= 1;\n", 32),
         "local <Boolean> Ready =\n\tA      >  0 and\n\tLonger >= 1;\n"
     );
 }
@@ -64,9 +68,180 @@ fn boolean_initializer_keeps_comparisons_together() {
 #[test]
 fn nested_parentheses_stay_visible() {
     assert_eq!(
-        formatted("if (A eq 1 or (B < 2 and Longer < 3)) { X = 0; }\n"),
+        formatted_at_width("if (A eq 1 or (B < 2 and Longer < 3)) { X = 0; }\n", 24),
         "if (\n\tA eq 1 or\n\t(\n\t\tB      < 2 and\n\t\tLonger < 3\n\t)\n)\n{\n\tX = 0;\n}\n"
     );
+}
+
+#[test]
+fn fitting_conditions_stay_inline() {
+    for expected in [
+        "bRearLeftCommsLost = bRearLeftCommsLost or msgTimeout;\n",
+        "msgRecieved = (CanComms.RxFindMessage(dtiRx, 0x433, 0, 0, 0x00) and CanComms.GetLength(dtiRx) >= 8);\n",
+        "local <Boolean> Ready = A > 0 and Longer >= 1;\n",
+        "if (A eq 1 or (B < 2 and Longer < 3))\n{\n\tX = 0;\n}\n",
+    ] {
+        assert_eq!(formatted(expected), expected);
+    }
+    assert_eq!(
+        formatted("bRearLeftCommsLost =\n\tbRearLeftCommsLost or\n\tmsgTimeout;\n"),
+        "bRearLeftCommsLost = bRearLeftCommsLost or msgTimeout;\n"
+    );
+}
+
+#[test]
+fn condition_width_includes_statement_prefix_and_suffix() {
+    for statement in [
+        "Ready = First Condition and Second Condition;",
+        "Ready = First Condition and Second Condition;  // status",
+        "local <Boolean> Ready = First Condition and Second Condition;",
+        "local <Boolean> Ready = First Condition and Second Condition;  // status",
+    ] {
+        for indent_style in [m1_fmt::IndentStyle::Tab, m1_fmt::IndentStyle::Spaces] {
+            let indent = if indent_style == m1_fmt::IndentStyle::Tab {
+                "\t"
+            } else {
+                "    "
+            };
+            let src = format!("if (Enabled)\n{{\n{indent}{statement}\n}}\n");
+            let mut opts = FormatOptions {
+                align_conditions: true,
+                indent_style,
+                line_width: 4 + statement.len(),
+                ..Default::default()
+            };
+            assert_eq!(checked(&src, &opts), src);
+            opts.line_width -= 1;
+            let wrapped = checked(&src, &opts);
+            assert!(wrapped.contains("=\n"), "{wrapped}");
+        }
+    }
+}
+
+#[test]
+fn condition_width_includes_if_delimiters_and_else_prefix() {
+    for brace_style in [m1_fmt::BraceStyle::Allman, m1_fmt::BraceStyle::Kr] {
+        let opts = FormatOptions {
+            align_conditions: true,
+            brace_style,
+            ..Default::default()
+        };
+        for src in [
+            "if (First Condition and Second Condition) { X = 0; }\n",
+            "if (Enabled) { X = 1; } else if (First Condition and Second Condition) { X = 0; }\n",
+        ] {
+            let expected = checked(
+                src,
+                &FormatOptions {
+                    align_conditions: false,
+                    ..opts.clone()
+                },
+            );
+            let width = expected
+                .lines()
+                .find(|line| line.contains("First Condition"))
+                .unwrap()
+                .len();
+            let mut opts = FormatOptions {
+                line_width: width,
+                ..opts.clone()
+            };
+            assert_eq!(checked(src, &opts), expected);
+            opts.line_width -= 1;
+            let wrapped = checked(src, &opts);
+            assert!(wrapped.contains("if (\n"), "{wrapped}");
+        }
+    }
+}
+
+#[test]
+fn pre_brace_comments_do_not_reserve_kr_brace_width() {
+    for comment in ["// x\n", "/* x */\n", "/* x */ "] {
+        let src = format!("if (A and B) {comment}{{ X = 0; }}\n");
+        let expected = format!("if (A and B)\n{}\n{{\n\tX = 0;\n}}\n", comment.trim());
+        let mut opts = FormatOptions {
+            align_conditions: true,
+            brace_style: m1_fmt::BraceStyle::Kr,
+            line_width: 12,
+            ..Default::default()
+        };
+        assert_eq!(checked(&src, &opts), expected);
+        opts.line_width = 11;
+        assert!(checked(&src, &opts).starts_with("if (\n"));
+    }
+}
+
+#[test]
+fn fitting_group_inside_wrapped_condition_stays_inline() {
+    let result = formatted_at_width(
+        "if (Very Long Condition Name and (A eq 1 or B eq 2)) { X = 0; }\n",
+        40,
+    );
+    assert_eq!(
+        result,
+        "if (\n\tVery Long Condition Name and\n\t(A eq 1 or B eq 2)\n)\n{\n\tX = 0;\n}\n"
+    );
+}
+
+#[test]
+fn nested_condition_rows_use_full_width_and_reserve_their_separator() {
+    for brace_style in [m1_fmt::BraceStyle::Allman, m1_fmt::BraceStyle::Kr] {
+        for (condition, row) in [
+            ("Enabled and (A eq 1 or B eq 2)", "(A eq 1 or B eq 2)"),
+            ("(A eq 1 or B eq 2) and Enabled", "(A eq 1 or B eq 2) and"),
+            ("(A eq 1 or B eq 2) or Enabled", "(A eq 1 or B eq 2) or"),
+        ] {
+            let src = format!("if ({condition}) {{ X = 0; }}\n");
+            let mut opts = FormatOptions {
+                align_conditions: true,
+                brace_style,
+                line_width: 4 + row.len(),
+                ..Default::default()
+            };
+            let result = checked(&src, &opts);
+            assert!(
+                result.lines().any(|line| line == format!("\t{row}")),
+                "{result}"
+            );
+            opts.line_width -= 1;
+            let wrapped = checked(&src, &opts);
+            assert!(wrapped.contains("\t(\n"), "{wrapped}");
+        }
+    }
+}
+
+#[test]
+fn nested_condition_rows_do_not_reserve_suffixes_on_the_closing_line() {
+    for src in [
+        "Ready = (Enabled and (A eq 1 or B eq 2));\n",
+        "Ready = (Enabled and (A eq 1 or B eq 2));  // state\n",
+        "Ready = (Enabled and (A eq 1 or B eq 2)) or Other;\n",
+    ] {
+        let result = formatted_at_width(src, 26);
+        assert!(result.contains("\t\t(A eq 1 or B eq 2)\n"), "{result}");
+        let wrapped = formatted_at_width(src, 25);
+        assert!(wrapped.contains("\t\t(\n"), "{wrapped}");
+    }
+}
+
+#[test]
+fn closing_block_comment_does_not_force_the_condition_to_wrap() {
+    let src = "if (A and B)\n{\n\tX = 0;\n}  // block is done\n";
+    for (brace_style, expected) in [
+        (m1_fmt::BraceStyle::Allman, src),
+        (
+            m1_fmt::BraceStyle::Kr,
+            "if (A and B) {\n\tX = 0;\n}  // block is done\n",
+        ),
+    ] {
+        let opts = FormatOptions {
+            align_conditions: true,
+            brace_style,
+            line_width: 24,
+            ..Default::default()
+        };
+        assert_eq!(checked(src, &opts), expected);
+    }
 }
 
 #[test]
@@ -85,6 +260,7 @@ fn spaces_and_kr_work_with_nested_conditions() {
         indent_style: m1_fmt::IndentStyle::Spaces,
         indent_width: 2,
         brace_style: m1_fmt::BraceStyle::Kr,
+        line_width: 22,
         ..Default::default()
     };
     let src = "if (A eq 1 and (B < 2 or Longer >= 3)) { X = 0; }\n";

@@ -64,12 +64,17 @@ impl Printer {
         true
     }
 
-    pub(super) fn condition_layout_enabled(&self, node: Node<'_>) -> bool {
+    pub(super) fn condition_needs_rows(&mut self, node: Node<'_>, start_col: usize) -> bool {
         // Embedded comments need their existing trivia placement. Do not move
         // them to different boolean terms just to produce aligned columns.
-        self.align_conditions
-            && (logical(node) || grouped(node).is_some())
-            && !self.commented_condition(node)
+        if !self.align_conditions
+            || !(logical(node) || grouped(node).is_some())
+            || self.commented_condition(node)
+        {
+            return false;
+        }
+        let flat = self.flat_of(node, |p| p.emit_expr_flat(node));
+        self.exceeds_limit(start_col, &flat)
     }
 
     pub(super) fn commented_condition(&self, node: Node<'_>) -> bool {
@@ -163,10 +168,18 @@ impl Printer {
                 self.emit_newline();
             }
             self.emit_indent();
-            if let Some(inner) = grouped(*term) {
+            let saved_reserve = self.eol_reserve;
+            if !separator.is_empty() {
+                self.eol_reserve = 1 + separator.len();
+            }
+            if let Some(inner) = grouped(*term)
+                && self.condition_needs_rows(*term, self.current_col())
+            {
                 self.emit("(");
                 self.emit_newline();
                 self.indent += 1;
+                // The suffix follows the closing parenthesis on a separate row.
+                self.eol_reserve = 0;
                 self.emit_condition_rows(inner);
                 self.indent -= 1;
                 self.emit_newline();
@@ -183,13 +196,9 @@ impl Printer {
             } else {
                 // Let the normal expression printer wrap a comparison that
                 // cannot fit. Padding must never create a new width violation.
-                let saved = self.eol_reserve;
-                if !separator.is_empty() {
-                    self.eol_reserve = 1 + separator.len();
-                }
                 self.emit_expr(*term);
-                self.eol_reserve = saved;
             }
+            self.eol_reserve = saved_reserve;
             if !separator.is_empty() {
                 self.emit(" ");
                 self.emit(separator);

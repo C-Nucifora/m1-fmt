@@ -807,7 +807,11 @@ fn condition_alignment_flags_override_config_and_each_other() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("sample.m1scr");
     std::fs::write(&file, "if (A eq 1 and Longer neq 2) { X = 0; }\n").unwrap();
-    std::fs::write(dir.path().join(".m1fmt.toml"), "align_conditions = true\n").unwrap();
+    std::fs::write(
+        dir.path().join(".m1fmt.toml"),
+        "align_conditions = true\nmax_line_length = 24\n",
+    )
+    .unwrap();
     for (flags, aligned) in [
         (vec![], true),
         (vec!["--no-align-conditions"], false),
@@ -838,7 +842,7 @@ fn condition_alignment_cli_uses_unified_config_and_overrides() {
     std::fs::write(&file, "if (A eq 1 and Longer neq 2) { X = 0; }\n").unwrap();
     std::fs::write(
         dir.path().join("m1-tools.toml"),
-        "[format]\nalign_conditions = true\n",
+        "[format]\nalign_conditions = true\nline_width = 24\n",
     )
     .unwrap();
     let format = |flags: &[&str]| {
@@ -851,6 +855,10 @@ fn condition_alignment_cli_uses_unified_config_and_overrides() {
         String::from_utf8(output.stdout).unwrap()
     };
     assert!(format(&[]).starts_with("if (\n"));
+    assert_eq!(
+        format(&["--line-width", "120"]),
+        "if (A eq 1 and Longer neq 2)\n{\n\tX = 0;\n}\n"
+    );
     assert!(format(&["--no-align-conditions"]).starts_with("if (A eq 1"));
     std::fs::write(dir.path().join(".m1fmt.toml"), "align_conditions = false\n").unwrap();
     assert!(format(&[]).starts_with("if (A eq 1"));
