@@ -57,8 +57,19 @@ impl Printer {
     }
 
     /// Width reserved on the opener's last line for what follows the `)` before
-    /// the block: `) {` (3) for K&R, just `)` (1) for Allman (brace next line).
-    pub(super) fn close_paren_reserve(&self) -> usize {
+    /// the block: `) {` (3) for K&R, just `)` (1) when the brace is on a new line.
+    pub(super) fn close_paren_reserve(&self, node: Node) -> usize {
+        if let Some(rparen) = self.find_child_of_kind(node, Kind::RParen)
+            && let Some(lbrace) = self
+                .find_child_of_kind(node, Kind::Block)
+                .and_then(|block| self.find_child_of_kind(block, Kind::LBrace))
+            && self.trivia.iter().any(|t| {
+                (rparen.byte_range().end..lbrace.byte_range().start).contains(&t.byte_offset)
+            })
+        {
+            // print_block puts pre-brace comments and the brace on their own lines.
+            return 1;
+        }
         match self.brace_style {
             crate::BraceStyle::Allman => 1,
             crate::BraceStyle::Kr => 3,
@@ -143,13 +154,12 @@ impl Printer {
                 Kind::LineComment | Kind::BlockComment => {}
                 _ => {
                     if seen_lparen && !preserved_condition {
-                        // Reserve room for the trailing `) {` that follows the
-                        // condition, so the wrap decision accounts for it.
+                        // Reserve only the delimiters that stay on this header line.
                         let saved = self.width;
                         let saved_reserve = self.eol_reserve;
                         // A trailing statement comment follows the block, not this header.
                         self.eol_reserve = 0;
-                        self.width = self.width.saturating_sub(self.close_paren_reserve());
+                        self.width = self.width.saturating_sub(self.close_paren_reserve(node));
                         if self.condition_needs_rows(child, self.current_col()) {
                             // The closing parenthesis is now on its own row.
                             self.width = saved;

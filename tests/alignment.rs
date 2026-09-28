@@ -155,6 +155,23 @@ fn condition_width_includes_if_delimiters_and_else_prefix() {
 }
 
 #[test]
+fn pre_brace_comments_do_not_reserve_kr_brace_width() {
+    for comment in ["// x\n", "/* x */\n", "/* x */ "] {
+        let src = format!("if (A and B) {comment}{{ X = 0; }}\n");
+        let expected = format!("if (A and B)\n{}\n{{\n\tX = 0;\n}}\n", comment.trim());
+        let mut opts = FormatOptions {
+            align_conditions: true,
+            brace_style: m1_fmt::BraceStyle::Kr,
+            line_width: 12,
+            ..Default::default()
+        };
+        assert_eq!(checked(&src, &opts), expected);
+        opts.line_width = 11;
+        assert!(checked(&src, &opts).starts_with("if (\n"));
+    }
+}
+
+#[test]
 fn fitting_group_inside_wrapped_condition_stays_inline() {
     let result = formatted_at_width(
         "if (Very Long Condition Name and (A eq 1 or B eq 2)) { X = 0; }\n",
