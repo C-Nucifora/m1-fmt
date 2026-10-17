@@ -26,10 +26,13 @@ pub const MAX_INDENT_WIDTH: usize = 64;
 /// as the CLI/CI — e.g. honouring a `brace_style = "kr"` — instead of the
 /// hard-coded defaults.
 pub fn resolve_options(dir: &Path) -> FormatOptions {
+    let dir = std::env::current_dir()
+        .map(|cwd| cwd.join(dir))
+        .unwrap_or_else(|_| dir.to_path_buf());
     let mut o = FormatOptions::default();
 
     // Layer 1: the unified m1-tools.toml [format] section (lowest config layer).
-    if let Some(tc) = m1_workspace::config::M1ToolsConfig::discover(dir) {
+    if let Some(tc) = m1_workspace::config::M1ToolsConfig::discover(&dir) {
         let f = tc.format;
         if let Some(n) = f.line_width {
             o.line_width = n;
@@ -64,7 +67,7 @@ pub fn resolve_options(dir: &Path) -> FormatOptions {
     }
 
     // Layer 2: the tool-specific .m1fmt.toml overrides the unified file.
-    if let Some(cfg) = discover(dir) {
+    if let Some(cfg) = discover(&dir) {
         if let Some(n) = cfg.max_line_length {
             o.line_width = n;
         }
@@ -180,7 +183,12 @@ pub fn parse(s: &str) -> Result<FileConfig, String> {
 /// Walk upward from `start` looking for `.m1fmt.toml` (then `m1fmt.toml`) and
 /// return the first one that parses. Returns `None` if none is found.
 pub fn discover(start: &Path) -> Option<FileConfig> {
-    let mut dir = Some(start);
+    let start = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(start)
+    };
+    let mut dir = Some(start.as_path());
     while let Some(d) = dir {
         for name in [".m1fmt.toml", "m1fmt.toml"] {
             let path = d.join(name);
