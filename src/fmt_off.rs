@@ -88,6 +88,7 @@ pub(crate) fn splice(
     lf_src: &str,
     lf_out: &str,
     src_regions: &[(usize, usize)],
+    src_cst: &Cst,
 ) -> Option<(String, Vec<(usize, usize)>)> {
     let out_cst = m1_core::parse(lf_out);
     let out_regions = off_regions(lf_out, &out_cst);
@@ -117,5 +118,22 @@ pub(crate) fn splice(
     if cursor < out_lines.len() {
         final_lines.extend_from_slice(&out_lines[cursor..]);
     }
-    Some((final_lines.join("\n"), final_spans))
+    let output = final_lines.join("\n");
+    let cst = m1_core::parse(&output);
+    // Relocated markers must not splice expressions back into printed code.
+    if !cst.syntax_diagnostics().is_empty() || semantic_tokens(src_cst) != semantic_tokens(&cst) {
+        return None;
+    }
+    Some((output, final_spans))
+}
+
+fn semantic_tokens(cst: &Cst) -> Vec<(Kind, &str)> {
+    cst.root()
+        .descendants()
+        .filter(|node| {
+            !matches!(node.kind(), Kind::LineComment | Kind::BlockComment)
+                && node.children().is_empty()
+        })
+        .map(|node| (node.kind(), node.text()))
+        .collect()
 }
