@@ -112,3 +112,12 @@ fn range_warnings_use_file_line_numbers() {
         r.warnings.iter().map(|w| w.line).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn range_declines_truncated_multiline_comment() {
+    let src = "if (A)\n{\n\tX=1; /*\nhi\n*/\n}\n";
+    assert_eq!(m1_fmt::syntax_error_count(src), 0);
+    for _ in 0..2 {
+        assert!(format_range(src, 2, 2, &opts()).unwrap().is_none());
+    }
+}

@@ -2,6 +2,7 @@ use clap::Parser;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process;
 
@@ -105,16 +106,6 @@ struct Args {
     /// runs; stdin and single-file runs are inherently serial.
     #[arg(long, value_name = "N")]
     jobs: Option<usize>,
-}
-
-/// Read a file's text via the tolerant workspace decoder, preserving a leading
-/// UTF-8 BOM that the decoder strips (m1-workspace#9). A formatter round-trips
-/// its input, so a BOM-prefixed file must keep its BOM; the shared
-/// [`m1_fmt::decode_preserving_bom`] helper restores it and `format_str_with`
-/// then carries it through to the output.
-fn read_text_preserving_bom(path: &std::path::Path) -> std::io::Result<String> {
-    let bytes = std::fs::read(path)?;
-    Ok(m1_fmt::decode_preserving_bom(bytes))
 }
 
 /// Parse a `START:END` (1-based, inclusive) range argument.
@@ -261,7 +252,7 @@ fn reset_sigpipe() {}
 /// those streams for this file; the flags feed the run-wide exit-code reduction.
 #[derive(Default)]
 struct FileOutcome {
-    stdout: String,
+    stdout: Vec<u8>,
     stderr: String,
     changed: bool,
     error: bool,
@@ -284,7 +275,14 @@ fn process_file(
     // rejected by a strict UTF-8 read (#58). The diff path reuses the same decoded
     // text as the original. The decoder strips a leading BOM (m1-workspace#9); read
     // raw bytes so we can detect and preserve it (a formatter round-trips its input).
-    let read = read_text_preserving_bom(path).map_err(m1_fmt::FormatError::IoError);
+    let mut raw_input = Vec::new();
+    let read = std::fs::read(path)
+        .map(|bytes| {
+            let text = m1_fmt::decode_preserving_bom(bytes.clone());
+            raw_input = bytes;
+            text
+        })
+        .map_err(m1_fmt::FormatError::IoError);
     let original = read.as_ref().ok().cloned();
     let outcome = read.and_then(|src| {
         format_buffer(&src, opts, range).map(|(output, changed, warnings)| m1_fmt::FormatResult {
@@ -324,11 +322,14 @@ fn process_file(
                     let _ = writeln!(out.stderr, "{}: would reformat", path.display());
                 } else if args.diff {
                     let orig = original.as_deref().unwrap_or("");
-                    out.stdout.push_str(&m1_workspace::diff::unified_diff(
-                        &path.display().to_string(),
-                        orig,
-                        &result.output,
-                    ));
+                    out.stdout.extend_from_slice(
+                        m1_workspace::diff::unified_diff(
+                            &path.display().to_string(),
+                            orig,
+                            &result.output,
+                        )
+                        .as_bytes(),
+                    );
                 } else if args.in_place {
                     if let Err(e) = m1_workspace::atomic_write(path, result.output.as_bytes()) {
                         let _ = writeln!(out.stderr, "m1-fmt: {}: {}", path.display(), e);
@@ -339,10 +340,14 @@ fn process_file(
                         out.error = true;
                     }
                 } else {
-                    out.stdout.push_str(&result.output);
+                    out.stdout.extend_from_slice(result.output.as_bytes());
                 }
             } else if !args.check && !args.diff && !args.in_place {
-                out.stdout.push_str(&result.output);
+                out.stdout.extend_from_slice(if out.syntax_error {
+                    &raw_input
+                } else {
+                    result.output.as_bytes()
+                });
             }
         }
         Err(e) => {
@@ -480,7 +485,7 @@ fn main() {
         // formatter that round-trips its input we must NOT silently drop it: the
         // shared `decode_preserving_bom` helper re-prepends it so `format_str_with`
         // preserves it (on both the normal path and the syntax-error passthrough).
-        let src = m1_fmt::decode_preserving_bom(bytes);
+        let src = m1_fmt::decode_preserving_bom(bytes.clone());
         match format_buffer(&src, &opts, range).map(|(output, changed, warnings)| {
             m1_fmt::FormatResult {
                 output,
@@ -505,7 +510,15 @@ fn main() {
                         print_diff(&args.stdin_filename, &src, &result.output);
                     }
                 } else if !args.check {
-                    print!("{}", result.output);
+                    let output = if serr > 0 {
+                        &bytes
+                    } else {
+                        result.output.as_bytes()
+                    };
+                    if let Err(error) = std::io::stdout().write_all(output) {
+                        eprintln!("m1-fmt: stdout: {error}");
+                        any_error = true;
+                    }
                 }
                 if result.changed {
                     any_changed = true;
@@ -576,8 +589,9 @@ fn main() {
             if !outcome.stderr.is_empty() {
                 eprint!("{}", outcome.stderr);
             }
-            if !outcome.stdout.is_empty() {
-                print!("{}", outcome.stdout);
+            if let Err(error) = std::io::stdout().write_all(&outcome.stdout) {
+                eprintln!("m1-fmt: stdout: {error}");
+                any_error = true;
             }
         }
 

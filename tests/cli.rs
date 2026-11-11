@@ -864,3 +864,56 @@ fn condition_alignment_cli_uses_unified_config_and_overrides() {
     assert!(format(&[]).starts_with("if (A eq 1"));
     assert!(format(&["--align-conditions"]).starts_with("if (\n"));
 }
+
+#[test]
+fn malformed_cp1252_passthrough_preserves_raw_bytes() {
+    let bytes = b"// \xb0\nx=;\n";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("broken.m1scr");
+    std::fs::write(&path, bytes).unwrap();
+    let (stdout, _, code) = run_with_file(&[path.to_str().unwrap()]);
+    assert_eq!(code, Some(1));
+    assert_eq!(stdout, bytes);
+    for flag in ["--check", "--diff", "-i"] {
+        let (stdout, _, code) = run_with_file(&[flag, path.to_str().unwrap()]);
+        assert_eq!(code, Some(1));
+        assert!(stdout.is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_m1-fmt"))
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert_eq!(result.stdout, bytes);
+}
+
+#[test]
+fn reflow_in_place_preserves_executable_suffix() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comment.m1scr");
+    std::fs::write(
+        &path,
+        "X = A /*\n// alpha beta gamma delta epsilon zeta eta theta */ + B;\n",
+    )
+    .unwrap();
+    let args = [
+        "--align-conditions",
+        "--reflow-comments",
+        "--line-width",
+        "20",
+        "-i",
+        path.to_str().unwrap(),
+    ];
+    assert_eq!(run_with_file(&args).2, Some(0));
+    let once = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(m1_fmt::syntax_error_count(&once), 0);
+    assert!(once.contains("+ B;"));
+    assert_eq!(run_with_file(&args).2, Some(0));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), once);
+}

@@ -174,6 +174,19 @@ fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatEr
         }
     };
 
+    // Printer bugs must not escape as source changes, including changes that
+    // still parse but alter executable tokens.
+    let printed = m1_core::parse(&lf_output);
+    if !printed.syntax_diagnostics().is_empty()
+        || semantic_tokens(&cst) != semantic_tokens(&printed)
+    {
+        return Ok(FormatResult {
+            output: src.to_string(),
+            changed: false,
+            warnings: vec![],
+        });
+    }
+
     let output = if uses_crlf {
         lf_output.replace('\n', "\r\n")
     } else {
@@ -217,6 +230,21 @@ fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatEr
         changed,
         warnings,
     })
+}
+
+fn semantic_tokens(cst: &m1_core::Cst) -> Vec<(m1_core::Kind, &str)> {
+    cst.root()
+        .descendants()
+        .filter(|node| {
+            !matches!(
+                node.kind(),
+                m1_core::Kind::LineComment | m1_core::Kind::BlockComment
+            )
+        })
+        .filter(|node| node.child_nodes().next().is_none())
+        .filter(|node| !node.text().trim().is_empty())
+        .map(|node| (node.kind(), node.text().trim()))
+        .collect()
 }
 
 /// Result of formatting a line range: the replacement text and the 0-based,
@@ -344,6 +372,11 @@ pub fn format_range(
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
         .collect::<Vec<_>>()
         .join("\n");
+    // A statement's physical line can include the start of a trailing block
+    // comment whose remainder falls outside the snapped statement span.
+    if syntax_error_count(&slice) != 0 {
+        return Ok(None);
+    }
     // A nested snap formats at indent 0; restore the original block indentation
     // (taken verbatim from the snapped region's first line) on every non-blank
     // output line so the splice keeps its depth (#98). The slice is wrapped

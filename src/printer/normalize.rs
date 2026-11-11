@@ -33,10 +33,8 @@ fn code_only_carry(line: &str, in_block_comment: &mut bool) -> String {
             continue;
         }
         if in_string {
-            if c == '\\' {
-                // Skip the escaped character verbatim.
-                chars.next();
-            } else if c == '"' {
+            // M1 strings treat backslashes literally, including before a quote.
+            if c == '"' {
                 in_string = false;
             }
             continue;
@@ -92,7 +90,7 @@ pub(super) fn strip_brace_adjacent_blanks(output: &mut String) {
     let mut keep = vec![true; lines.len()];
 
     for i in 0..lines.len() {
-        if !is_blank(lines[i]) {
+        if !is_blank(lines[i]) || block_comment_entry[i] {
             continue;
         }
         // Leading blanks at file top.
@@ -142,9 +140,12 @@ pub(super) fn normalize_trailing(output: &mut String, max_blank: usize, final_bl
 fn collapse_blank_lines(output: &mut String, max_blank: usize) {
     let mut result = String::with_capacity(output.len());
     let mut blank_run = 0usize;
+    let mut in_block_comment = false;
     for line in output.split_inclusive('\n') {
         let content = line.strip_suffix('\n').unwrap_or(line);
-        if content.trim().is_empty() {
+        let inside_comment = in_block_comment;
+        let _ = code_only_carry(content, &mut in_block_comment);
+        if content.trim().is_empty() && !inside_comment {
             blank_run += 1;
             if blank_run <= max_blank {
                 result.push_str(line);
@@ -333,12 +334,23 @@ pub(super) fn align_assignment_groups(output: &mut String, width: usize, indent_
 /// `///`-doc, `////`-rule and `@m1:` annotation lines are never touched (an
 /// annotation must stay on one line to keep its meaning).
 pub(super) fn reflow_long_line_comments(output: &mut String, width: usize) {
+    let cst = m1_core::parse(output);
+    let comments: std::collections::HashSet<usize> = cst
+        .root()
+        .descendants()
+        .filter(|node| node.kind() == m1_core::Kind::LineComment)
+        .map(|node| node.byte_range().start)
+        .collect();
+    let mut offset = 0;
     let mut result = String::with_capacity(output.len());
     for line in output.split_inclusive('\n') {
         let content = line.strip_suffix('\n').unwrap_or(line);
         let trimmed = content.trim_start();
         let indent = &content[..content.len() - trimmed.len()];
-        let eligible = trimmed.starts_with("// ")
+        let is_comment = comments.contains(&(offset + indent.len()));
+        offset += line.len();
+        let eligible = is_comment
+            && trimmed.starts_with("// ")
             && !trimmed.starts_with("///")
             && !trimmed.contains("@m1:")
             && content.chars().count() > width;
