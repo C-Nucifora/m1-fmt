@@ -115,11 +115,27 @@ fn range_warnings_use_file_line_numbers() {
 
 #[test]
 fn range_declines_truncated_multiline_comment() {
-    let src = "if (A)\n{\n\tX=1; /*\nhi\n*/\n}\n";
+    let src = "X=1; /*\nhi\n*/\n";
     assert_eq!(m1_fmt::syntax_error_count(src), 0);
     for _ in 0..2 {
-        assert!(format_range(src, 2, 2, &opts()).unwrap().is_none());
+        assert!(format_range(src, 0, 0, &opts()).unwrap().is_none());
     }
+}
+
+#[test]
+fn range_expands_to_preserve_trailing_multiline_comment() {
+    let src = "if (A)\n{\n\tX=1; /*\nhi\n*/\n}\n";
+    assert_eq!(m1_fmt::syntax_error_count(src), 0);
+    // The inner statement's line truncates the comment, so use the whole if.
+    let r = format_range(src, 2, 2, &opts()).unwrap().unwrap();
+    assert_eq!((r.start_line, r.end_line), (0, 5));
+    assert_eq!(r.output, "if (A)\n{\n\tX = 1;  /*\nhi\n*/\n}\n");
+    assert!(r.changed);
+    assert_eq!(m1_fmt::syntax_error_count(&r.output), 0);
+    let twice = format_range(&r.output, 2, 2, &opts()).unwrap().unwrap();
+    assert_eq!((twice.start_line, twice.end_line), (0, 5));
+    assert_eq!(twice.output, r.output);
+    assert!(!twice.changed);
 }
 
 #[test]

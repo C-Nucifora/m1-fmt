@@ -162,7 +162,7 @@ fn format_body(src: &str, opts: &FormatOptions) -> Result<FormatResult, FormatEr
     let (lf_output, off_spans) = if off_regions.is_empty() {
         (lf_output, Vec::new())
     } else {
-        match fmt_off::splice(&lf_src, &lf_output, &off_regions) {
+        match fmt_off::splice(&lf_src, &lf_output, &off_regions, &cst) {
             Some(spliced) => spliced,
             None => {
                 return Ok(FormatResult {
@@ -298,7 +298,10 @@ pub fn format_range(
         for child in children {
             if matches!(
                 child.kind(),
-                m1_core::Kind::LineComment | m1_core::Kind::BlockComment
+                m1_core::Kind::LineComment
+                    | m1_core::Kind::BlockComment
+                    | m1_core::Kind::LBrace
+                    | m1_core::Kind::RBrace
             ) {
                 continue;
             }
@@ -315,6 +318,7 @@ pub fn format_range(
     };
 
     // Deepest block whose overlapped children fully cover the request.
+    let lines: Vec<&str> = src.split('\n').collect();
     let mut best: Option<(usize, usize)> = None;
     let mut best_depth = 0usize;
     for node in cst.root().descendants() {
@@ -338,6 +342,13 @@ pub fn format_range(
             && e >= req_end_line
             && depth > best_depth
         {
+            // Shared brace lines can leave an incomplete standalone slice.
+            if !m1_core::parse(&lines[s..=e].join("\n"))
+                .syntax_diagnostics()
+                .is_empty()
+            {
+                continue;
+            }
             best = Some((s, e));
             best_depth = depth;
         }
@@ -366,7 +377,6 @@ pub fn format_range(
     // to build a clean LF slice, then restore CRLF on the output if the source
     // used it.
     let uses_crlf = src.contains("\r\n");
-    let lines: Vec<&str> = src.split('\n').collect();
     let slice = lines[start_line..=end_line]
         .iter()
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
