@@ -378,8 +378,8 @@ pub fn format_range(
         return Ok(None);
     }
     // A nested snap formats at indent 0; restore the original block indentation
-    // (taken verbatim from the snapped region's first line) on every non-blank
-    // output line so the splice keeps its depth (#98). The slice is wrapped
+    // (taken verbatim from the snapped region's first line) on non-blank code
+    // lines so the splice keeps its depth (#98). The slice is wrapped
     // against a budget reduced by that prefix's display width, so re-indented
     // lines still respect `line_width`.
     let indent_prefix: String = if best_depth > 0 {
@@ -400,12 +400,29 @@ pub fn format_range(
     let reindented = if indent_prefix.is_empty() {
         result.output
     } else {
+        // Match emit_block_comment: only javadoc's star-prefixed continuation
+        // lines follow code indentation; all other comment interiors stay raw.
+        let formatted = m1_core::parse(&result.output);
+        let mut verbatim_lines = vec![false; result.output.lines().count()];
+        for comment in formatted
+            .root()
+            .descendants()
+            .filter(|node| node.kind() == m1_core::Kind::BlockComment)
+        {
+            let is_javadoc = comment.text().starts_with("/**");
+            for (offset, line) in comment.text().split('\n').enumerate().skip(1) {
+                if !is_javadoc || !line.trim_start().starts_with('*') {
+                    verbatim_lines[comment.range().start.line as usize + offset] = true;
+                }
+            }
+        }
         result
             .output
             .split_inclusive('\n')
-            .map(|line| {
+            .enumerate()
+            .map(|(line_idx, line)| {
                 let content = line.strip_suffix('\n').unwrap_or(line);
-                if content.trim().is_empty() {
+                if verbatim_lines[line_idx] || content.trim().is_empty() {
                     line.to_string()
                 } else {
                     format!("{indent_prefix}{line}")

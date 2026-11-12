@@ -121,3 +121,136 @@ fn range_declines_truncated_multiline_comment() {
         assert!(format_range(src, 2, 2, &opts()).unwrap().is_none());
     }
 }
+
+#[test]
+fn complete_comment_ranges_format_and_preserve_comment_layout() {
+    let comments = [
+        ("/* cafe\n  L\n*/", false),
+        ("/* café\n\t  λ\n\n\n\n*/", false),
+        ("/*\n    *custom indent\n\t*deeper\n  nonstar\n*/", false),
+        ("/**\n    *doc\n\t*more\n  raw café\n\tλ\n\n*/", true),
+    ];
+    for (comment, is_javadoc) in comments {
+        for newline in ["\n", "\r\n"] {
+            for (unit, style) in [
+                ("\t", m1_fmt::IndentStyle::Tab),
+                ("  ", m1_fmt::IndentStyle::Spaces),
+            ] {
+                for depth in [0, 1, 2] {
+                    let options = FormatOptions {
+                        indent_style: style,
+                        indent_width: 2,
+                        ..opts()
+                    };
+                    let prefix = unit.repeat(depth);
+                    let mut before = String::new();
+                    let mut after = String::new();
+                    for level in 0..depth {
+                        let indent = unit.repeat(level);
+                        before.push_str(&format!("{indent}if (A)\n{indent}{{\n"));
+                    }
+                    for level in (0..depth).rev() {
+                        after.push_str(&format!("{}}}\n", unit.repeat(level)));
+                    }
+                    let body = format!("{prefix}X=1;\n{prefix}{comment}\n{prefix}Y=2;\n");
+                    let src = format!("{before}{body}{after}").replace('\n', newline);
+                    let start = depth * 2;
+                    let end = start + body.lines().count() - 1;
+                    let r = format_range(&src, start, end, &options)
+                        .unwrap()
+                        .expect("complete comment range must format");
+                    assert_eq!((r.start_line, r.end_line), (start, end));
+                    assert!(r.changed, "assignments must be formatted");
+
+                    let expected_comment = comment
+                        .split('\n')
+                        .enumerate()
+                        .map(|(line_idx, line)| {
+                            if is_javadoc && line_idx > 0 && line.trim_start().starts_with('*') {
+                                format!("{prefix} {}", line.trim_start())
+                            } else {
+                                line.to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let expected =
+                        format!("{prefix}X = 1;\n{prefix}{expected_comment}\n{prefix}Y = 2;\n")
+                            .replace('\n', newline);
+                    assert_eq!(r.output, expected, "depth {depth}, {style:?}, {newline:?}");
+                    let once = format!(
+                        "{}{expected}{}",
+                        before.replace('\n', newline),
+                        after.replace('\n', newline)
+                    );
+                    assert_eq!(m1_fmt::syntax_error_count(&once), 0, "{once}");
+                    let comment_texts = |text: &str| {
+                        m1_core::parse(text)
+                            .root()
+                            .descendants()
+                            .filter(|node| node.kind() == m1_core::Kind::BlockComment)
+                            .map(|node| node.text().to_owned())
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(
+                        comment_texts(&once),
+                        vec![expected_comment.replace('\n', newline)]
+                    );
+                    if !is_javadoc {
+                        assert_eq!(comment_texts(&once), comment_texts(&src));
+                    }
+                    let twice = format_range(&once, start, end, &options)
+                        .unwrap()
+                        .expect("second pass must still format");
+                    assert_eq!(twice.output, r.output);
+                    assert!(!twice.changed);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn range_comment_spans_ignore_delimiters_in_strings_and_line_comments() {
+    let src = "if (A)\n{\n\tX=\"/*\"; // /**\n\tY=\"*/\";\n\t/* raw\n  keep\n*/\n\tZ=3;\n}\n";
+    let r = format_range(src, 2, 7, &opts()).unwrap().unwrap();
+    assert_eq!(
+        r.output,
+        "\tX = \"/*\";  // /**\n\tY = \"*/\";\n\t/* raw\n  keep\n*/\n\tZ = 3;\n"
+    );
+    assert!(r.changed);
+    let once = format!("if (A)\n{{\n{}}}\n", r.output);
+    assert_eq!(m1_fmt::syntax_error_count(&once), 0);
+    let twice = format_range(&once, 2, 7, &opts()).unwrap().unwrap();
+    assert_eq!(twice.output, r.output);
+    assert!(!twice.changed);
+}
+
+#[test]
+fn range_preserves_comment_inside_a_nested_statement() {
+    let src = "if (A)\n{\n\tX=1;\n\tif (B)\n\t{\n\t\tY=2;\n\t\t/* table\n *ordinary\n  raw\n*/\n\t\tZ=3;\n\t}\n\tW=4;\n}\n";
+    let r = format_range(src, 2, 12, &opts()).unwrap().unwrap();
+    let expected = "\tX = 1;\n\tif (B)\n\t{\n\t\tY = 2;\n\t\t/* table\n *ordinary\n  raw\n*/\n\t\tZ = 3;\n\t}\n\tW = 4;\n";
+    assert_eq!(r.output, expected);
+    assert!(r.changed);
+    let once = format!("if (A)\n{{\n{}}}\n", r.output);
+    assert_eq!(m1_fmt::syntax_error_count(&once), 0);
+    let twice = format_range(&once, 2, 12, &opts()).unwrap().unwrap();
+    assert_eq!(twice.output, expected);
+    assert!(!twice.changed);
+}
+
+#[test]
+fn complete_trailing_comment_and_javadoc_share_a_range() {
+    let src = "if (A)\n{\n\tX=1; /* café\n  λ\n*/\n\t/**\n    *doc\n  raw\n*/\n\tY=2;\n}\n";
+    let r = format_range(src, 2, 9, &opts()).unwrap().unwrap();
+    let expected = "\tX = 1;  /* café\n  λ\n*/\n\n\n\t/**\n\t *doc\n  raw\n\t */\n\tY = 2;\n";
+    assert_eq!(r.output, expected);
+    assert!(r.changed);
+    let once = format!("if (A)\n{{\n{}}}\n", r.output);
+    assert_eq!(m1_fmt::syntax_error_count(&once), 0);
+    let end = 2 + r.output.lines().count() - 1;
+    let twice = format_range(&once, 2, end, &opts()).unwrap().unwrap();
+    assert_eq!(twice.output, expected);
+    assert!(!twice.changed);
+}
