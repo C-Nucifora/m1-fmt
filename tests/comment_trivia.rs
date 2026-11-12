@@ -130,3 +130,77 @@ fn decode_preserving_bom_leaves_bom_less_input_untouched() {
         "a BOM-less input must not gain a BOM; got:\n{decoded:?}"
     );
 }
+
+#[test]
+fn reflow_never_treats_block_comment_interior_as_code_comment() {
+    let src = "X = A /*\n// alpha beta gamma delta epsilon zeta eta theta */ + B;\n";
+    let tokens = |text: &str| {
+        let tree = m1_core::parse(text);
+        tree.root()
+            .descendants()
+            .filter(|n| {
+                !matches!(
+                    n.kind(),
+                    m1_core::Kind::LineComment | m1_core::Kind::BlockComment
+                )
+            })
+            .filter(|n| n.children().is_empty())
+            .map(|n| n.text().to_owned())
+            .collect::<Vec<_>>()
+    };
+    for width in [20, 30] {
+        for align in [false, true] {
+            let opts = FormatOptions {
+                line_width: width,
+                align_conditions: align,
+                reflow_comments: true,
+                ..Default::default()
+            };
+            let printed = m1_fmt::printer::print_with(&m1_core::parse(src), &opts);
+            assert_eq!(m1_fmt::syntax_error_count(&printed), 0, "{printed}");
+            assert_eq!(tokens(src), tokens(&printed));
+            let out = format_str_with(src, &opts).unwrap().output;
+            assert_eq!(m1_fmt::syntax_error_count(&out), 0, "{out}");
+            assert_eq!(tokens(src), tokens(&out));
+            assert!(out.contains("/*\n// alpha beta gamma delta epsilon zeta eta theta */"));
+            assert_eq!(format_str_with(&out, &opts).unwrap().output, out);
+        }
+    }
+}
+
+#[test]
+fn doc_prefixes_and_block_blank_lines_survive_normalization() {
+    for prefix in ["///", "////"] {
+        let src = format!(
+            "{prefix} documentation words that should not be reflowed at any width\nx=1;\n"
+        );
+        for reflow in [false, true] {
+            let opts = FormatOptions {
+                line_width: 20,
+                reflow_comments: reflow,
+                ..Default::default()
+            };
+            let out = format_str_with(&src, &opts).unwrap().output;
+            assert_eq!(out.lines().next(), src.lines().next());
+        }
+    }
+    let comment = "/* header\n\n\n\ntrailer */";
+    let out = format_str(&format!("{comment}\nx=1;\n")).unwrap().output;
+    assert!(out.contains(comment), "{out}");
+}
+
+#[test]
+fn literal_backslash_before_quote_does_not_hide_a_block_comment() {
+    let comment = "/* header\n\n\n\ntrailer */";
+    let src = format!(
+        r#"X = "abc\"; {comment}
+"#
+    );
+    let tree = m1_core::parse(&src);
+    assert!(tree.syntax_diagnostics().is_empty());
+    let printed = m1_fmt::printer::print_with(&tree, &FormatOptions::default());
+    assert!(printed.contains(comment), "{printed}");
+    let out = format_str(&src).unwrap().output;
+    assert!(out.contains(comment), "{out}");
+    assert_eq!(format_str(&out).unwrap().output, out);
+}
